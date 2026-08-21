@@ -288,10 +288,15 @@ bulk fan-out with per-row progress, SSE liveness, empty state, machine-limit cou
 and terminate handles the `session_export_failed` → force path.
 
 **Phase 2 — Launch wizard + detail Overview.**
-Four-step wizard, live limit clamping, the three inline error codes; Overview tab, inline
+Four-step wizard, live limit clamping, the three inline error codes; Overview, inline
 rename, `last_error` callout.
 *Done when:* a machine can be created from the console with a non-default template and
 overridden resources, and the resulting detail page shows exactly what was requested.
+
+*Shipped without the tab strip.* Overview is the only tab that exists until Phase 3, and a
+strip of three "not built yet" tabs is worse than no strip. The URLs are already tabbed
+(`/machines/:id/overview`, with `/machines/:id` redirecting to it), so Phase 3 adds
+siblings without changing any link that exists today.
 
 **Phase 3 — Connect + web terminal.**
 Connect chooser, full-page terminal with a multi-session tab strip, the stopped-machine
