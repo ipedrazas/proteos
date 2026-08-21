@@ -11,8 +11,9 @@ ProteOS gives each user one or more **machines** — full
 [Firecracker](https://firecracker-microvm.github.io/) microVMs with their own
 kernel, rootfs, and workspace. AI coding agents (Claude Code, Gemini, Codex) run
 *inside* those microVMs, so an agent is isolated from the host by a hardware VM
-boundary rather than a shared kernel. Users drive their machines from an
-ocean-themed browser desktop or from the `proteos` CLI.
+boundary rather than a shared kernel. Users drive their machines from a browser
+— a resource-oriented **console**, or an ocean-themed **desktop** — or from the
+`proteos` CLI.
 
 The system is a Go workspace (`go.work`) of four modules plus a React SPA:
 
@@ -22,7 +23,7 @@ The system is a Go workspace (`go.work`) of four modules plus a React SPA:
 | **Node-agent**   | `nodeagent/`    | KVM host(s)        | Provisions & supervises Firecracker microVMs on a host            |
 | **Guest-agent**  | `guestagent/`   | inside each microVM| Executes work in the guest, reachable over vsock                  |
 | **CLI**          | `cli/`          | user's machine/CI  | `proteos` — scriptable client over the same HTTP API              |
-| **Web**          | `web/`          | served via nginx   | React (Vite) single-page desktop                                  |
+| **Web**          | `web/`          | served via nginx   | React (Vite) SPA: console, desktop, and mobile shells             |
 
 ## Request path
 
@@ -52,7 +53,7 @@ browser ──► TLS proxy ──► web (nginx) ──► control plane ──
   surface; the host↔guest control channel is vsock, and user-facing traffic is
   proxied through the authenticated gateway.
 - **Secrets stay out of the environment.** Provider API keys and the GitHub
-  connection are entered per-user in the desktop, stored encrypted in **OpenBao**,
+  connection are entered per-user in the web UI, stored encrypted in **OpenBao**,
   and injected into a machine on demand — never set as process env on the host.
 - **The gateway is the single ingress to a machine.** Terminals, the in-browser
   VS Code editor (code-server), and port previews are all reached at
@@ -62,7 +63,14 @@ browser ──► TLS proxy ──► web (nginx) ──► control plane ──
   used for local development and most CI) and a `firecracker` driver behind a
   build tag (real microVMs, exercised only on KVM hosts).
 - **Agent-first CLI.** `proteos` is built to be driven by a coding agent or CI as
-  much as by a human, mirroring the same control-plane API the desktop uses.
+  much as by a human, mirroring the same control-plane API the web UI uses.
+
+- **One SPA, several shells.** The console, the desktop window manager, and the
+  mobile shell are three presentations over one API layer, code-split by route
+  and mounted at `/console`, `/`, and `/m`. They share the typed client, the
+  React Query cache, and the terminal transport; only the presentation differs.
+  The session cookie + CSRF model requires the SPA and API to share one origin,
+  which is why they are one app rather than separate deployments.
 
 ## Control-plane internals
 

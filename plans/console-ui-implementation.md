@@ -350,9 +350,19 @@ Two corrections made here:
   where it rendered "Pending 0, Pending 1, Pending 0". An admin wants the distinction:
   machines stuck in `requested` is a different alarm from `starting`.
 
-**Phase 7 — Default-shell decision + docs.**
-Decide whether `/` defaults to the console. Update `README.md` and `docs/architecture.md`
-with the three-shell model. Optionally add a per-user preference server-side.
+**Phase 7 — Default-shell decision + docs.** *(Done.)*
+`/` now defaults to the **console**; the desktop is one click away in the account menu and
+the choice is remembered. `README.md` and `docs/architecture.md` describe the three-shell
+model.
+
+One migration consequence, accepted deliberately: `setShell` previously stored only the
+non-default and read *absence* as "the default", so anyone who had explicitly chosen the
+desktop is indistinguishable from someone who never chose, and lands on the console once.
+Re-choosing sticks, because both values are now stored verbatim — a future default change
+cannot do this again to anyone who has expressed a preference since.
+
+Not done: a server-side per-user preference. `localStorage` means the choice does not follow
+a user to a second browser. Worth revisiting only if that turns out to annoy anyone.
 
 ---
 

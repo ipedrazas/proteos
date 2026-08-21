@@ -12,44 +12,50 @@ function memStorage(initial: Record<string, string> = {}) {
 }
 
 describe('resolveShell', () => {
-  it('defaults to the desktop with no preference and no query param', () => {
-    expect(resolveShell('', memStorage())).toBe('desktop');
+  it('defaults to the console with no preference and no query param', () => {
+    expect(resolveShell('', memStorage())).toBe('console');
+  });
+
+  it('honours a stored desktop preference', () => {
+    expect(resolveShell('', memStorage({ 'proteos-ui-shell': 'desktop' }))).toBe('desktop');
   });
 
   it('honours a stored console preference', () => {
     expect(resolveShell('', memStorage({ 'proteos-ui-shell': 'console' }))).toBe('console');
   });
 
-  it('?shell=console selects the console and remembers it', () => {
+  it('?shell=desktop selects the desktop and remembers it', () => {
     const storage = memStorage();
+    expect(resolveShell('?shell=desktop', storage)).toBe('desktop');
+    expect(resolveShell('', storage)).toBe('desktop');
+  });
+
+  it('?shell=console selects the console and remembers it', () => {
+    const storage = memStorage({ 'proteos-ui-shell': 'desktop' });
     expect(resolveShell('?shell=console', storage)).toBe('console');
     expect(resolveShell('', storage)).toBe('console');
   });
 
-  it('?shell=desktop selects the desktop and clears the stored preference', () => {
-    const storage = memStorage({ 'proteos-ui-shell': 'console' });
-    expect(resolveShell('?shell=desktop', storage)).toBe('desktop');
-    expect(storage.dump()).toEqual({});
-    expect(resolveShell('', storage)).toBe('desktop');
-  });
-
   it('ignores an unrecognised ?shell= value instead of clearing the preference', () => {
-    const storage = memStorage({ 'proteos-ui-shell': 'console' });
-    expect(resolveShell('?shell=banana', storage)).toBe('console');
-    expect(storage.dump()).toEqual({ 'proteos-ui-shell': 'console' });
+    const storage = memStorage({ 'proteos-ui-shell': 'desktop' });
+    expect(resolveShell('?shell=banana', storage)).toBe('desktop');
+    expect(storage.dump()).toEqual({ 'proteos-ui-shell': 'desktop' });
   });
 
-  it('treats an unknown stored value as the desktop default', () => {
-    expect(resolveShell('', memStorage({ 'proteos-ui-shell': 'banana' }))).toBe('desktop');
+  it('treats an unknown stored value as the console default', () => {
+    expect(resolveShell('', memStorage({ 'proteos-ui-shell': 'banana' }))).toBe('console');
   });
 });
 
 describe('setShell', () => {
-  it('stores the console choice and clears it for the desktop', () => {
+  it('stores both choices verbatim, including the default', () => {
+    // Storing only the non-default made "chose the default" and "never chose"
+    // indistinguishable, so changing the default silently moved people who had
+    // picked the old one.
     const storage = memStorage();
+    setShell(storage, 'desktop');
+    expect(storage.dump()).toEqual({ 'proteos-ui-shell': 'desktop' });
     setShell(storage, 'console');
     expect(storage.dump()).toEqual({ 'proteos-ui-shell': 'console' });
-    setShell(storage, 'desktop');
-    expect(storage.dump()).toEqual({});
   });
 });
