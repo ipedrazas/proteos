@@ -55,10 +55,10 @@ export function App() {
 // from a desktop browser. "?desktop=1" is the remembered escape hatch back to
 // the desktop UI (see mobileGate.ts).
 //
-// Then the shell preference: a user who switched to the console gets the
-// console. The order matters — a phone gets the mobile shell regardless of a
-// console preference set earlier on a laptop, because the console targets a
-// desktop viewport (see shellChoice.ts).
+// Then the shell preference, which now defaults to the console. The order
+// matters — a phone gets the mobile shell regardless of the console preference,
+// because the console targets a desktop viewport (see shellChoice.ts). The
+// desktop window manager is unchanged and one click away in the account menu.
 function RootGate() {
   const { search } = useLocation();
   const toMobile = useMemo(() => {
@@ -79,8 +79,9 @@ function RootGate() {
     try {
       return resolveShell(search, window.localStorage);
     } catch {
-      // Same fail-open rationale as above.
-      return 'desktop' as const;
+      // Same fail-open rationale as above: land on the default rather than
+      // failing to render because localStorage threw.
+      return 'console' as const;
     }
   }, [search]);
 
