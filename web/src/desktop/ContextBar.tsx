@@ -4,7 +4,7 @@ import { useMachineMutations, useMe, useProjects, useTemplates } from '../api/ho
 import { useSelectedMachine } from './selectedMachineStore';
 import { useWindowManager } from './windowManagerContext';
 import { focusedWindow } from './windowState';
-import { useClickOutside } from './useClickOutside';
+import { useClickOutside } from '../lib/useClickOutside';
 import { CreateMachineDialog } from './CreateMachineDialog';
 import { CreateUpToLimitDialog } from './CreateUpToLimitDialog';
 import { DestroyAllDialog } from './DestroyAllDialog';

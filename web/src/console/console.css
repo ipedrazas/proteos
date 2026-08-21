@@ -1,0 +1,295 @@
+/* Console shell styles.
+
+   Two rules hold this file together:
+
+   1. Every class is `c-` prefixed AND every rule is scoped under `.c-app`. The
+      app's global styles.css is ~3000 lines of unscoped desktop selectors; the
+      scoping is what keeps the two from bleeding into each other in both
+      directions, not a naming nicety.
+   2. Colour comes from the shared :root palette in styles.css. The --c-* tokens
+      below are layout/density decisions and status colours specific to a dense
+      control panel — they layer on the palette rather than replacing it.
+
+   The visual message is "control panel", not "desktop": flat panels, 1px
+   borders, small radii, no shadows, no drag affordances. */
+
+.c-app {
+  /* Surfaces. --c-surface sits between the page background and the desktop's
+     --panel so a panel on the page reads as raised without a shadow. */
+  --c-surface: #161b22;
+  --c-surface-raised: #1c2129;
+  --c-hover: #1f2630;
+
+  /* Status. Deliberately the GitHub-dark palette the rest of the app uses. */
+  --c-ok: #3fb950;
+  --c-pending: #d29922;
+  --c-danger: var(--error);
+
+  /* Density. One 8px unit; 32px table rows come later from --c-row-h. */
+  --c-unit: 8px;
+  --c-radius: 6px;
+  --c-topbar-h: 48px;
+  --c-sidenav-w: 232px;
+
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+/* --- Top bar --------------------------------------------------------------- */
+
+.c-app .c-topbar {
+  position: relative;
+  flex: 0 0 var(--c-topbar-h);
+  display: flex;
+  align-items: center;
+  gap: var(--c-unit);
+  padding: 0 calc(var(--c-unit) * 2);
+  background: var(--c-surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.c-app .c-brand {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--c-unit) * 0.75);
+  color: var(--text);
+}
+
+.c-app .c-brand-name {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.c-app .c-brand-sub {
+  color: var(--muted);
+  font-size: 13px;
+  padding-left: calc(var(--c-unit) * 0.75);
+  border-left: 1px solid var(--border);
+}
+
+.c-app .c-topbar-spacer {
+  flex: 1;
+}
+
+.c-app .c-account-button {
+  display: flex;
+  align-items: center;
+  gap: var(--c-unit);
+  padding: calc(var(--c-unit) * 0.5) var(--c-unit);
+  background: transparent;
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: var(--c-radius);
+  font: inherit;
+  cursor: pointer;
+}
+
+.c-app .c-account-button:hover {
+  background: var(--c-hover);
+  border-color: var(--border);
+}
+
+.c-app .c-account-button img {
+  border-radius: 50%;
+  display: block;
+}
+
+.c-app .c-account-login {
+  font-size: 13px;
+}
+
+.c-app .c-account-menu {
+  position: absolute;
+  top: calc(var(--c-topbar-h) - 4px);
+  right: calc(var(--c-unit) * 2);
+  z-index: 20;
+  min-width: 220px;
+  padding: calc(var(--c-unit) * 0.5) 0;
+  background: var(--c-surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--c-radius);
+}
+
+.c-app .c-account-email {
+  padding: calc(var(--c-unit) * 0.75) calc(var(--c-unit) * 1.5);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.c-app .c-menu-sep {
+  height: 1px;
+  margin: calc(var(--c-unit) * 0.5) 0;
+  background: var(--border);
+}
+
+.c-app .c-menu-item {
+  display: block;
+  width: 100%;
+  padding: calc(var(--c-unit) * 0.75) calc(var(--c-unit) * 1.5);
+  background: transparent;
+  color: var(--text);
+  border: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.c-app .c-menu-item:hover:not(:disabled) {
+  background: var(--c-hover);
+}
+
+.c-app .c-menu-item:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+/* --- Body: side nav + main ------------------------------------------------- */
+
+.c-app .c-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.c-app .c-sidenav {
+  flex: 0 0 var(--c-sidenav-w);
+  overflow-y: auto;
+  padding: calc(var(--c-unit) * 2) 0;
+  background: var(--c-surface);
+  border-right: 1px solid var(--border);
+}
+
+.c-app .c-nav-group + .c-nav-group {
+  margin-top: calc(var(--c-unit) * 2.5);
+}
+
+.c-app .c-nav-group-title {
+  margin: 0 0 var(--c-unit);
+  padding: 0 calc(var(--c-unit) * 2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.c-app .c-nav-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.c-app .c-nav-item {
+  display: block;
+  padding: calc(var(--c-unit) * 0.75) calc(var(--c-unit) * 2);
+  /* The active marker is an inset border so the label never shifts between
+     states — a 3px accent bar that pushes text is the classic nav jitter. */
+  border-left: 3px solid transparent;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.c-app .c-nav-item:hover {
+  background: var(--c-hover);
+}
+
+.c-app .c-nav-item-active {
+  background: var(--c-hover);
+  border-left-color: var(--accent);
+  font-weight: 600;
+}
+
+.c-app .c-main {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+/* --- Page scaffold --------------------------------------------------------- */
+
+.c-app .c-page {
+  max-width: 1440px;
+  padding: calc(var(--c-unit) * 3);
+}
+
+.c-app .c-page-header {
+  margin-bottom: calc(var(--c-unit) * 2);
+}
+
+.c-app .c-page-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.c-app .c-panel {
+  background: var(--c-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--c-radius);
+  padding: calc(var(--c-unit) * 2);
+}
+
+.c-app .c-muted {
+  color: var(--muted);
+  margin: 0;
+}
+
+.c-app .c-placeholder-note {
+  margin-top: var(--c-unit);
+  font-size: 13px;
+}
+
+/* --- Responsive ------------------------------------------------------------ */
+
+/* Below 1024px the side nav becomes a horizontal strip rather than eating a
+   third of the viewport. The console targets a desktop browser; this keeps a
+   narrow window usable without pretending to be the mobile shell. */
+@media (max-width: 1024px) {
+  .c-app .c-body {
+    flex-direction: column;
+  }
+
+  .c-app .c-sidenav {
+    flex: 0 0 auto;
+    display: flex;
+    gap: calc(var(--c-unit) * 2);
+    padding: var(--c-unit) calc(var(--c-unit) * 2);
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .c-app .c-nav-group + .c-nav-group {
+    margin-top: 0;
+  }
+
+  .c-app .c-nav-group-title {
+    display: none;
+  }
+
+  .c-app .c-nav-list {
+    display: flex;
+    gap: var(--c-unit);
+  }
+
+  .c-app .c-nav-item {
+    white-space: nowrap;
+    padding: calc(var(--c-unit) * 0.5) var(--c-unit);
+    border-left: none;
+    border-bottom: 2px solid transparent;
+  }
+
+  .c-app .c-nav-item-active {
+    border-left: none;
+    border-bottom-color: var(--accent);
+  }
+
+  .c-app .c-page {
+    padding: calc(var(--c-unit) * 2);
+  }
+}
