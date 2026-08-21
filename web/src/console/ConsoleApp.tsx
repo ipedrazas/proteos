@@ -1,8 +1,11 @@
-import { Navigate, Route, Routes, useNavigate } from 'react-router';
+import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router';
 import type { Me } from '../api/client';
 import { useMachineEvents } from '../api/hooks';
+import { LaunchWizard } from './machines/LaunchWizard';
+import { MachineDetail } from './machines/MachineDetail';
 import { MachinesList } from './machines/MachinesList';
-import { MACHINES, SideNav } from './nav';
+import { SideNav } from './nav';
+import { MACHINES, machineOverviewPath } from './paths';
 import { Placeholder } from './Placeholder';
 import { TopBar } from './TopBar';
 import './console.css';
@@ -20,6 +23,13 @@ import './console.css';
 // Phase 0 ships the shell alone: every service route renders a Placeholder. The
 // later phases replace them one at a time, in the order of
 // plans/console-ui-implementation.md.
+// MachineDetailRedirect sends /console/machines/:id to its first tab. It needs
+// the id from the route, so it cannot be a bare <Navigate> in the route table.
+function MachineDetailRedirect() {
+  const { id } = useParams();
+  return <Navigate to={id ? machineOverviewPath(id) : MACHINES} replace />;
+}
+
 export function ConsoleApp({ me }: { me: Me }) {
   const navigate = useNavigate();
   // One SSE subscription for the whole console, mounted here because every
@@ -37,18 +47,16 @@ export function ConsoleApp({ me }: { me: Me }) {
           <Routes>
             <Route index element={<Navigate to={MACHINES} replace />} />
             <Route path="machines" element={<MachinesList me={me} />} />
-            {/* The launch wizard is phase 2. Until then the button on the
-                machines page lands here and says so, rather than silently
-                bouncing back to a list that looks like it ignored the click. */}
-            <Route
-              path="machines/launch"
-              element={
-                <Placeholder
-                  title="Launch machine"
-                  summary="Pick a template, name the machine, and size it within the template's limits."
-                />
-              }
-            />
+            {/* Ordered before machines/:id, though React Router ranks a static
+                segment above a dynamic one regardless — MachinesList.test and
+                ConsoleApp.test both pin it, because "launch" quietly becoming a
+                machine id is exactly the kind of thing that would look like a
+                missing machine rather than a routing bug. */}
+            <Route path="machines/launch" element={<LaunchWizard me={me} />} />
+            <Route path="machines/:id/overview" element={<MachineDetail me={me} />} />
+            {/* The detail root redirects to its first tab, so /machines/:id is
+                a usable link. Phase 3 adds the sibling tabs. */}
+            <Route path="machines/:id" element={<MachineDetailRedirect />} />
             <Route
               path="templates"
               element={

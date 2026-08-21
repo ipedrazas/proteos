@@ -7,7 +7,7 @@ import { failures, runBulk } from '../bulk';
 import { describeApiError } from '../errors';
 import { machineActions } from '../machineState';
 import { filterMachines, STATE_FILTERS, type StateFilter } from '../machinesFilter';
-import { MACHINES_LAUNCH } from '../nav';
+import { MACHINES_LAUNCH, machineOverviewPath } from '../paths';
 import { StateBadge } from '../ui/StateBadge';
 import { TerminateDialog } from './TerminateDialog';
 
@@ -309,7 +309,9 @@ function MachineRow({
         />
       </td>
       <td>
-        <span className="c-machine-name">{machine.name}</span>
+        <Link className="c-machine-name" to={machineOverviewPath(machine.id)}>
+          {machine.name}
+        </Link>
         {mark === 'working' && <span className="c-row-mark c-muted"> working…</span>}
         {mark === 'failed' && <span className="c-row-mark c-row-mark-failed"> failed</span>}
       </td>

@@ -1,17 +1,10 @@
 import { NavLink } from 'react-router';
+import { MACHINES } from './paths';
 
 // SideNav is the console's primary navigation: a persistent, grouped list of
 // services, AWS-style. Unlike the desktop's LeftRail it navigates to routes
 // rather than opening windows, and nothing here depends on a "current machine"
 // — every entry is a resource collection that stands on its own.
-
-// Every console path is written absolute. Relative targets resolve against the
-// matched pathname, and the console is mounted under a splat route (/console/*)
-// — so a relative "machines" from /console/keys resolves to
-// /console/keys/machines rather than /console/machines. Absolute paths are
-// unambiguous, and the console has exactly one mount point to be absolute about.
-export const MACHINES = '/console/machines';
-export const MACHINES_LAUNCH = '/console/machines/launch';
 
 interface NavItem {
   to: string;

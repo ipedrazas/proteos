@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatAge, gib } from './format';
+import { formatAge, formatTimestamp, gib } from './format';
 
 const SEC = 1000;
 const MIN = 60 * SEC;
@@ -55,5 +55,22 @@ describe('gib', () => {
   it('renders an absent size as an em dash', () => {
     // disk_mib is null until a machine has a disk; "undefined GiB" is worse.
     expect(gib(undefined)).toBe('—');
+  });
+});
+
+describe('formatTimestamp', () => {
+  it('renders a parseable timestamp as a locale string', () => {
+    // The exact rendering is the runtime's business; that it is not the raw ISO
+    // string and not "Invalid Date" is ours.
+    const out = formatTimestamp('2026-08-18T09:00:00Z');
+    expect(out).not.toBe('—');
+    expect(out).not.toContain('Invalid');
+  });
+
+  it('renders absent or unparseable values as an em dash', () => {
+    expect(formatTimestamp(null)).toBe('—');
+    expect(formatTimestamp(undefined)).toBe('—');
+    expect(formatTimestamp('')).toBe('—');
+    expect(formatTimestamp('not a date')).toBe('—');
   });
 });

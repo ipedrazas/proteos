@@ -30,3 +30,15 @@ export function gib(mib: number | undefined): string {
   const g = mib / 1024;
   return `${Number.isInteger(g) ? g : g.toFixed(1)} GiB`;
 }
+
+// formatTimestamp renders an RFC3339 timestamp in the reader's own locale, for
+// the places that need the actual moment rather than an age ("created 3d ago"
+// is right in a table; a detail page should say when). Anything unparseable —
+// including the empty string the API uses for "never" — renders as an em dash
+// rather than "Invalid Date".
+export function formatTimestamp(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return '—';
+  return new Date(ms).toLocaleString();
+}

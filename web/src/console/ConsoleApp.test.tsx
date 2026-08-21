@@ -35,6 +35,24 @@ class FakeEventSource {
 // role. Those three are the parts a later phase can silently break while every
 // page still renders fine on its own.
 
+const MACHINE = {
+  id: 'aaaaaaaa-1111-2222-3333-444444444444',
+  name: 'api-dev',
+  state: 'running' as const,
+  guest_ip: null,
+  kernel_ref: 'vmlinux',
+  rootfs_ref: 'ubuntu-24.04',
+  template_id: 'go',
+  resource_spec: { vcpus: 2, mem_mib: 4096, disk_mib: 10240 },
+  last_error: null,
+  created_at: '2026-08-18T09:00:00Z',
+  last_active_at: null,
+  boot: null,
+  disk_id: null,
+  disk_mib: null,
+  snapshot: null,
+};
+
 function makeMe(overrides: Partial<Me> = {}): Me {
   return {
     user: { login: 'ada', email: 'ada@example.com', avatar_url: '' },
@@ -119,6 +137,29 @@ describe('ConsoleApp', () => {
 
   it('shows the Admin nav entry to an admin', () => {
     expect(navLabels(render(makeMe({ is_admin: true }), '/console'))).toContain('Admin');
+  });
+
+  it('routes /machines/launch to the wizard, not to a machine called "launch"', () => {
+    // A static segment outranks a dynamic sibling, but the failure mode if it
+    // ever stopped doing so is "Machine not found" — which reads as missing
+    // data, not as a routing bug. Worth pinning.
+    expect(pageTitle(render(makeMe(), '/console/machines/launch'))).toBe('Launch machine');
+  });
+
+  it('renders a machine detail page for a known id', () => {
+    const c = render(makeMe({ machines: [MACHINE] }), `/console/machines/${MACHINE.id}/overview`);
+    expect(pageTitle(c)).toBe('api-dev');
+  });
+
+  it('redirects the detail root to the overview tab', () => {
+    const c = render(makeMe({ machines: [MACHINE] }), `/console/machines/${MACHINE.id}`);
+    expect(pageTitle(c)).toBe('api-dev');
+  });
+
+  it('says so when a machine id does not exist', () => {
+    expect(pageTitle(render(makeMe(), '/console/machines/nope/overview'))).toBe(
+      'Machine not found',
+    );
   });
 
   it('opens exactly one machine-event stream for the whole console', () => {

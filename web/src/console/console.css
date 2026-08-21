@@ -594,6 +594,254 @@
   margin: 0;
 }
 
+/* --- Detail header --------------------------------------------------------- */
+
+.c-app .c-breadcrumb {
+  display: inline-block;
+  margin-bottom: var(--c-unit);
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.c-app .c-breadcrumb:hover {
+  color: var(--text);
+}
+
+.c-app .c-page-sub {
+  display: flex;
+  align-items: center;
+  gap: var(--c-unit);
+}
+
+.c-app .c-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.c-app .c-copy {
+  padding: 2px calc(var(--c-unit) * 0.75);
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.c-app .c-copy:hover {
+  background: var(--c-hover);
+}
+
+.c-app .c-name-row {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--c-unit) * 1.5);
+}
+
+.c-app .c-rename {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 400;
+  vertical-align: middle;
+}
+
+.c-app .c-rename-form {
+  display: flex;
+  align-items: center;
+  gap: var(--c-unit);
+  flex-wrap: wrap;
+}
+
+.c-app .c-rename-error {
+  color: var(--c-danger);
+  font-size: 12px;
+}
+
+.c-app .c-machine-name {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.c-app .c-machine-name:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* --- Panels and definition lists ------------------------------------------- */
+
+.c-app .c-panel + .c-panel {
+  margin-top: calc(var(--c-unit) * 2);
+}
+
+.c-app .c-section-title {
+  margin: 0 0 calc(var(--c-unit) * 1.5);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Two columns on a grid rather than a floated dl: the term column sizes to its
+   widest label and the value column takes the rest, so values line up down the
+   page without a hardcoded width that a longer label would break. */
+.c-app .c-defs {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--c-unit) calc(var(--c-unit) * 3);
+  margin: 0;
+  font-size: 13px;
+}
+
+.c-app .c-defs dt {
+  color: var(--muted);
+}
+
+.c-app .c-defs dd {
+  margin: 0;
+}
+
+/* --- Wizard ---------------------------------------------------------------- */
+
+.c-app .c-steps {
+  display: flex;
+  gap: calc(var(--c-unit) * 2);
+  margin: calc(var(--c-unit) * 2) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.c-app .c-step {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--c-unit) * 0.75);
+  color: var(--muted);
+}
+
+.c-app .c-step-index {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  font-size: 11px;
+}
+
+.c-app .c-step-current {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.c-app .c-step-current .c-step-index {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.c-app .c-step-done .c-step-index {
+  border-color: var(--c-ok);
+  color: var(--c-ok);
+}
+
+.c-app .c-wizard-panel {
+  max-width: 640px;
+}
+
+.c-app .c-field {
+  display: block;
+  margin-bottom: calc(var(--c-unit) * 2);
+}
+
+.c-app .c-field-label {
+  display: block;
+  margin-bottom: calc(var(--c-unit) * 0.75);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.c-app .c-field-hint {
+  font-size: 12px;
+}
+
+.c-app .c-template-list {
+  margin: 0 0 calc(var(--c-unit) * 2);
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--c-unit);
+}
+
+.c-app .c-template {
+  display: block;
+  width: 100%;
+  padding: calc(var(--c-unit) * 1.5);
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--c-radius);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.c-app .c-template:hover {
+  background: var(--c-hover);
+}
+
+.c-app .c-template-selected {
+  border-color: var(--accent);
+  background: rgba(47, 129, 247, 0.08);
+}
+
+.c-app .c-template-label {
+  display: block;
+  font-weight: 600;
+}
+
+.c-app .c-template-desc,
+.c-app .c-template-spec {
+  display: block;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.c-app .c-slider-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: calc(var(--c-unit) * 0.75);
+}
+
+.c-app .c-slider-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.c-app .c-range {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.c-app .c-slider-bounds {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.c-app .c-wizard-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--c-unit);
+  margin-top: calc(var(--c-unit) * 2);
+  padding-top: calc(var(--c-unit) * 2);
+  border-top: 1px solid var(--border);
+}
+
 /* --- Responsive ------------------------------------------------------------ */
 
 /* Below 1024px the side nav becomes a horizontal strip rather than eating a
