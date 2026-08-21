@@ -1,13 +1,16 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, Navigate, useParams } from 'react-router';
 import type { MachineSummary, Me } from '../../api/client';
 import { useMachineMutations, useMachines } from '../../api/hooks';
 import { describeApiError } from '../errors';
 import { machineActions } from '../machineState';
-import { MACHINES } from '../paths';
+import { isMachineTab, MACHINES, machineOverviewPath, type MachineTab } from '../paths';
 import { CopyButton } from '../ui/CopyButton';
 import { StateBadge } from '../ui/StateBadge';
+import { ConnectTab } from './ConnectTab';
+import { MachineTabs } from './MachineTabs';
 import { OverviewTab } from './OverviewTab';
+import { TerminalTab } from './TerminalTab';
 import { TerminateDialog } from './TerminateDialog';
 
 // MachineDetail is one machine's page: an identity header with its lifecycle
@@ -20,9 +23,16 @@ import { TerminateDialog } from './TerminateDialog';
 // this component knowing anything about it. A per-machine fetch would be a
 // second source of truth that could disagree with the table one click away.
 export function MachineDetail({ me }: { me: Me }) {
-  const { id } = useParams();
+  const { id, tab } = useParams();
   const machines = useMachines(me.machines).data ?? [];
   const machine = machines.find((m) => m.id === id) ?? null;
+
+  // An unknown tab in the URL is a typo or a stale bookmark from before a tab
+  // was renamed. Land on Overview rather than rendering an empty body — the one
+  // tab that is always meaningful.
+  if (id && !isMachineTab(tab)) {
+    return <Navigate to={machineOverviewPath(id)} replace />;
+  }
 
   if (!machine) {
     return (
@@ -43,10 +53,10 @@ export function MachineDetail({ me }: { me: Me }) {
     );
   }
 
-  return <MachinePage machine={machine} />;
+  return <MachinePage machine={machine} tab={tab as MachineTab} />;
 }
 
-function MachinePage({ machine }: { machine: MachineSummary }) {
+function MachinePage({ machine, tab }: { machine: MachineSummary; tab: MachineTab }) {
   const { start, stop } = useMachineMutations();
   const [error, setError] = useState<string | null>(null);
   const [terminating, setTerminating] = useState(false);
@@ -116,7 +126,11 @@ function MachinePage({ machine }: { machine: MachineSummary }) {
         </p>
       )}
 
-      <OverviewTab machine={machine} />
+      <MachineTabs id={machine.id} active={tab} />
+
+      {tab === 'overview' && <OverviewTab machine={machine} />}
+      {tab === 'connect' && <ConnectTab machine={machine} />}
+      {tab === 'terminal' && <TerminalTab machine={machine} />}
 
       {terminating && (
         <TerminateDialog machines={[machine]} onClose={() => setTerminating(false)} />

@@ -53,7 +53,11 @@ export function ConsoleApp({ me }: { me: Me }) {
                 machine id is exactly the kind of thing that would look like a
                 missing machine rather than a routing bug. */}
             <Route path="machines/launch" element={<LaunchWizard me={me} />} />
-            <Route path="machines/:id/overview" element={<MachineDetail me={me} />} />
+            {/* One route for every tab, with the tab as a param — NOT a route
+                per tab. The element must stay identical across tab changes, or
+                switching tabs would remount the page and, with it, tear down
+                and re-open the terminal's WebSocket. */}
+            <Route path="machines/:id/:tab" element={<MachineDetail me={me} />} />
             {/* The detail root redirects to its first tab, so /machines/:id is
                 a usable link. Phase 3 adds the sibling tabs. */}
             <Route path="machines/:id" element={<MachineDetailRedirect />} />
