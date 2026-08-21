@@ -24,7 +24,7 @@ export interface BulkOutcome<T> {
   error?: unknown;
 }
 
-export const DEFAULT_BULK_CONCURRENCY = 4;
+const DEFAULT_BULK_CONCURRENCY = 4;
 
 export async function runBulk<T>(
   items: readonly T[],

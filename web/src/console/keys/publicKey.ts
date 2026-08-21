@@ -13,7 +13,7 @@
 // The key types OpenSSH emits today. DSA is deliberately absent — it is
 // disabled by default in modern OpenSSH, so accepting it here would produce a
 // key that is registered and then silently never works.
-export const SUPPORTED_KEY_TYPES = [
+const SUPPORTED_KEY_TYPES = [
   'ssh-ed25519',
   'ssh-rsa',
   'ecdsa-sha2-nistp256',

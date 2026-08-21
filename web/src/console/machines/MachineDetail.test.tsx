@@ -56,6 +56,8 @@ function render(machines: MachineSummary[], id = ID, tab = 'overview'): HTMLDivE
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
+  // Seeded so the Networking tab renders its form rather than its loading state.
+  client.setQueryData(['network-policy', id], { mode: 'allow_all', domains: [] });
   act(() => {
     root.render(
       <QueryClientProvider client={client}>
@@ -170,7 +172,7 @@ describe('MachineDetail', () => {
 
   it('renders the tab strip with every tab', () => {
     const labels = [...render([machine()]).querySelectorAll('.c-tab')].map((t) => t.textContent);
-    expect(labels).toEqual(['Overview', 'Connect', 'Terminal']);
+    expect(labels).toEqual(['Overview', 'Connect', 'Terminal', 'Networking', 'Activity']);
   });
 
   it('marks the tab from the URL as selected', () => {
@@ -225,5 +227,20 @@ describe('MachineDetail', () => {
     const c = render([machine()], ID, 'connect');
     expect(c.textContent).toContain(`proteos ssh ${ID}`);
     expect(c.textContent).toContain(`ProxyCommand proteos ssh-proxy ${ID}`);
+  });
+
+  it('renders the networking tab with the policy modes', () => {
+    const c = render([machine()], ID, 'networking');
+    expect(c.textContent).toContain('Allow all');
+    expect(c.textContent).toContain('Deny all');
+    expect(c.querySelectorAll('input[name="network-mode"]')).toHaveLength(4);
+  });
+
+  it('says the per-machine activity feed only covers this session', () => {
+    // There is no per-machine events endpoint and event rows carry no machine
+    // column, so attribution exists only for events seen live. The empty state
+    // must not imply the machine has simply been quiet.
+    const c = render([machine()], ID, 'activity');
+    expect(c.textContent).toContain('since this page was opened');
   });
 });

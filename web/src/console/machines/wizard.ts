@@ -21,8 +21,6 @@ export const WIZARD_STEPS = [
   { key: 'review', title: 'Review' },
 ] as const;
 
-export type StepKey = (typeof WIZARD_STEPS)[number]['key'];
-
 // clamp pins a value into an inclusive [min,max] range, rounding to an integer.
 //
 // NaN — what an emptied number field yields — collapses to min. It has to be

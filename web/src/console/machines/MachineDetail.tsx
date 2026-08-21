@@ -7,7 +7,9 @@ import { machineActions } from '../machineState';
 import { isMachineTab, MACHINES, machineOverviewPath, type MachineTab } from '../paths';
 import { CopyButton } from '../ui/CopyButton';
 import { StateBadge } from '../ui/StateBadge';
+import { ActivityTab } from './ActivityTab';
 import { ConnectTab } from './ConnectTab';
+import { NetworkingTab } from './NetworkingTab';
 import { MachineTabs } from './MachineTabs';
 import { OverviewTab } from './OverviewTab';
 import { TerminalTab } from './TerminalTab';
@@ -131,6 +133,8 @@ function MachinePage({ machine, tab }: { machine: MachineSummary; tab: MachineTa
       {tab === 'overview' && <OverviewTab machine={machine} />}
       {tab === 'connect' && <ConnectTab machine={machine} />}
       {tab === 'terminal' && <TerminalTab machine={machine} />}
+      {tab === 'networking' && <NetworkingTab machine={machine} />}
+      {tab === 'activity' && <ActivityTab machine={machine} />}
 
       {terminating && (
         <TerminateDialog machines={[machine]} onClose={() => setTerminating(false)} />

@@ -771,6 +771,18 @@ export function reconnectRequired(error: unknown): boolean {
   return error instanceof ApiError && error.status === 409 && error.code === 'reconnect_github';
 }
 
+// AttributedEvent is a machine event plus the machine it belongs to.
+//
+// The event row has no machine column server-side, so attribution is only
+// possible for events received LIVE, where the SSE frame pairs the event with
+// its machine. Events replayed in the initial snapshot arrive as a flat backfill
+// with no such pairing, so they carry no machine_id — a consumer that groups by
+// machine has to treat that as "unknown", not as a bug.
+export interface AttributedEvent extends MachineEvent {
+  machine_id?: string;
+  machine_name?: string;
+}
+
 // useMachineEvents subscribes to the SSE stream. It writes live machine state
 // into the machines-list cache (so useMachines stays current without polling)
 // and keeps a rolling event log for display. The browser EventSource reconnects
@@ -779,9 +791,9 @@ export function reconnectRequired(error: unknown): boolean {
 //
 // onAuthLost is called when the stream closes and a /api/me probe confirms the
 // session has expired — callers should redirect to /login.
-export function useMachineEvents(onAuthLost?: () => void): MachineEvent[] {
+export function useMachineEvents(onAuthLost?: () => void): AttributedEvent[] {
   const qc = useQueryClient();
-  const [events, setEvents] = useState<MachineEvent[]>([]);
+  const [events, setEvents] = useState<AttributedEvent[]>([]);
   // Guard against duplicate ids across reconnect replays.
   const seen = useRef<Set<number>>(new Set());
   // Stable ref so the effect closure always calls the current callback without
@@ -797,7 +809,7 @@ export function useMachineEvents(onAuthLost?: () => void): MachineEvent[] {
   useEffect(() => {
     const es = new EventSource(machineEventsUrl, { withCredentials: true });
 
-    const pushEvent = (ev: MachineEvent) => {
+    const pushEvent = (ev: AttributedEvent) => {
       if (seen.current.has(ev.id)) return;
       seen.current.add(ev.id);
       setEvents((prev) => [ev, ...prev].slice(0, 100));
@@ -817,7 +829,15 @@ export function useMachineEvents(onAuthLost?: () => void): MachineEvent[] {
     es.addEventListener('machine', (e) => {
       const data = JSON.parse((e as MessageEvent).data) as MachineEventData;
       upsertMachine(qc, data.machine);
-      pushEvent(data.event);
+      // The event row itself carries no machine id, but the live frame pairs it
+      // with the machine — so attribute it here rather than discarding what the
+      // stream already told us. A feed that cannot say WHICH machine changed is
+      // of little use to a console whose whole point is running several.
+      pushEvent({
+        ...data.event,
+        machine_id: data.machine.id,
+        machine_name: data.machine.name,
+      });
       log.debug('event', { type: data.event.type, to: data.event.to_state });
     });
 

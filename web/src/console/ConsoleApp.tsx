@@ -1,14 +1,17 @@
 import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router';
 import type { Me } from '../api/client';
 import { useMachineEvents } from '../api/hooks';
+import { ActivityPage } from './activity/ActivityPage';
+import { AdminPage } from './admin/AdminPage';
+import { ConsoleEventsContext } from './eventsContext';
 import { KeysPage } from './keys/KeysPage';
 import { LaunchWizard } from './machines/LaunchWizard';
 import { MachineDetail } from './machines/MachineDetail';
 import { MachinesList } from './machines/MachinesList';
 import { SecretsPage } from './secrets/SecretsPage';
+import { TemplatesPage } from './templates/TemplatesPage';
 import { SideNav } from './nav';
 import { MACHINES, machineOverviewPath } from './paths';
-import { Placeholder } from './Placeholder';
 import { TopBar } from './TopBar';
 import './console.css';
 
@@ -22,9 +25,7 @@ import './console.css';
 // download it, and it shares the api/, lib/, and components/ layers with every
 // other shell — only the presentation is new.
 //
-// Phase 0 ships the shell alone: every service route renders a Placeholder. The
-// later phases replace them one at a time, in the order of
-// plans/console-ui-implementation.md.
+// Every service route now renders a real page; the Phase 0 Placeholder is gone.
 // MachineDetailRedirect sends /console/machines/:id to its first tab. It needs
 // the id from the route, so it cannot be a bare <Navigate> in the route table.
 function MachineDetailRedirect() {
@@ -38,74 +39,52 @@ export function ConsoleApp({ me }: { me: Me }) {
   // console route wants live machine state and this is the lowest point that
   // covers them all. It must NOT move above the route split: the desktop and
   // mobile shells open their own stream, and only one shell is ever mounted.
-  useMachineEvents(() => navigate('/login', { replace: true }));
+  const events = useMachineEvents(() => navigate('/login', { replace: true }));
 
   return (
-    <div className="c-app">
-      <TopBar me={me} />
-      <div className="c-body">
-        <SideNav isAdmin={me.is_admin} />
-        <main className="c-main">
-          <Routes>
-            <Route index element={<Navigate to={MACHINES} replace />} />
-            <Route path="machines" element={<MachinesList me={me} />} />
-            {/* Ordered before machines/:id, though React Router ranks a static
+    <ConsoleEventsContext.Provider value={events}>
+      <div className="c-app">
+        <TopBar me={me} />
+        <div className="c-body">
+          <SideNav isAdmin={me.is_admin} />
+          <main className="c-main">
+            <Routes>
+              <Route index element={<Navigate to={MACHINES} replace />} />
+              <Route path="machines" element={<MachinesList me={me} />} />
+              {/* Ordered before machines/:id, though React Router ranks a static
                 segment above a dynamic one regardless — MachinesList.test and
                 ConsoleApp.test both pin it, because "launch" quietly becoming a
                 machine id is exactly the kind of thing that would look like a
                 missing machine rather than a routing bug. */}
-            <Route path="machines/launch" element={<LaunchWizard me={me} />} />
-            {/* One route for every tab, with the tab as a param — NOT a route
+              <Route path="machines/launch" element={<LaunchWizard me={me} />} />
+              {/* One route for every tab, with the tab as a param — NOT a route
                 per tab. The element must stay identical across tab changes, or
                 switching tabs would remount the page and, with it, tear down
                 and re-open the terminal's WebSocket. */}
-            <Route path="machines/:id/:tab" element={<MachineDetail me={me} />} />
-            {/* The detail root redirects to its first tab, so /machines/:id is
+              <Route path="machines/:id/:tab" element={<MachineDetail me={me} />} />
+              {/* The detail root redirects to its first tab, so /machines/:id is
                 a usable link. Phase 3 adds the sibling tabs. */}
-            <Route path="machines/:id" element={<MachineDetailRedirect />} />
-            <Route
-              path="templates"
-              element={
-                <Placeholder
-                  title="Templates"
-                  summary="The catalog of machine images you can launch from, with each one's default size and the limits your overrides must stay within."
-                />
-              }
-            />
-            <Route path="keys" element={<KeysPage me={me} />} />
-            <Route path="secrets" element={<SecretsPage />} />
-            <Route
-              path="activity"
-              element={
-                <Placeholder
-                  title="Activity"
-                  summary="Machine state transitions and errors across your fleet, alongside the application log."
-                />
-              }
-            />
-            {/* Admin is nav-gated on me.is_admin, but the route stays mounted for
+              <Route path="machines/:id" element={<MachineDetailRedirect />} />
+              <Route path="templates" element={<TemplatesPage />} />
+              <Route path="keys" element={<KeysPage me={me} />} />
+              <Route path="secrets" element={<SecretsPage />} />
+              <Route path="activity" element={<ActivityPage />} />
+              {/* Admin is nav-gated on me.is_admin, but the route stays mounted for
                 everyone: the server is the access check, and a non-admin who
                 types the URL should get the page's own empty/403 state rather
                 than a silent bounce that hides why nothing happened. */}
-            <Route
-              path="admin"
-              element={
-                <Placeholder
-                  title="Admin"
-                  summary="Fleet-wide totals and every machine across every user. Requires the proteos.admin role."
-                />
-              }
-            />
-            {/* An unknown console path is a typo, not a request for another
+              <Route path="admin" element={<AdminPage />} />
+              {/* An unknown console path is a typo, not a request for another
                 shell — keep it inside the console. Absolute, like every
                 redirect and link here: a relative target under a splat route
                 resolves against the matched pathname, so "machines" from
                 /console/nope becomes /console/nope/machines, which matches the
                 splat again and redirects forever. */}
-            <Route path="*" element={<Navigate to={MACHINES} replace />} />
-          </Routes>
-        </main>
+              <Route path="*" element={<Navigate to={MACHINES} replace />} />
+            </Routes>
+          </main>
+        </div>
       </div>
-    </div>
+    </ConsoleEventsContext.Provider>
   );
 }

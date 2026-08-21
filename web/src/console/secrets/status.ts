@@ -10,7 +10,7 @@
 
 import type { ProfileItem } from '../../api/client';
 
-export type ExpiryState = 'never' | 'active' | 'soon' | 'expired' | 'unknown';
+type ExpiryState = 'never' | 'active' | 'soon' | 'expired' | 'unknown';
 
 export interface Expiry {
   state: ExpiryState;
@@ -39,7 +39,7 @@ export function describeExpiry(expiresAt: string | undefined | null, now: number
   return { state: 'active', label: `Expires ${new Date(at).toLocaleDateString()}` };
 }
 
-export type ItemState = 'connected' | 'attention' | 'absent';
+type ItemState = 'connected' | 'attention' | 'absent';
 
 export interface ItemStatus {
   state: ItemState;
