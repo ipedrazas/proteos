@@ -11,6 +11,7 @@ import { NavLink } from 'react-router';
 // /console/keys/machines rather than /console/machines. Absolute paths are
 // unambiguous, and the console has exactly one mount point to be absolute about.
 export const MACHINES = '/console/machines';
+export const MACHINES_LAUNCH = '/console/machines/launch';
 
 interface NavItem {
   to: string;

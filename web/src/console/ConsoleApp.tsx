@@ -1,5 +1,7 @@
-import { Navigate, Route, Routes } from 'react-router';
+import { Navigate, Route, Routes, useNavigate } from 'react-router';
 import type { Me } from '../api/client';
+import { useMachineEvents } from '../api/hooks';
+import { MachinesList } from './machines/MachinesList';
 import { MACHINES, SideNav } from './nav';
 import { Placeholder } from './Placeholder';
 import { TopBar } from './TopBar';
@@ -19,6 +21,13 @@ import './console.css';
 // later phases replace them one at a time, in the order of
 // plans/console-ui-implementation.md.
 export function ConsoleApp({ me }: { me: Me }) {
+  const navigate = useNavigate();
+  // One SSE subscription for the whole console, mounted here because every
+  // console route wants live machine state and this is the lowest point that
+  // covers them all. It must NOT move above the route split: the desktop and
+  // mobile shells open their own stream, and only one shell is ever mounted.
+  useMachineEvents(() => navigate('/login', { replace: true }));
+
   return (
     <div className="c-app">
       <TopBar me={me} />
@@ -27,12 +36,16 @@ export function ConsoleApp({ me }: { me: Me }) {
         <main className="c-main">
           <Routes>
             <Route index element={<Navigate to={MACHINES} replace />} />
+            <Route path="machines" element={<MachinesList me={me} />} />
+            {/* The launch wizard is phase 2. Until then the button on the
+                machines page lands here and says so, rather than silently
+                bouncing back to a list that looks like it ignored the click. */}
             <Route
-              path="machines/*"
+              path="machines/launch"
               element={
                 <Placeholder
-                  title="Machines"
-                  summary="Every machine you own, with its state, size, and lifecycle actions — start, stop, connect, and terminate."
+                  title="Launch machine"
+                  summary="Pick a template, name the machine, and size it within the template's limits."
                 />
               }
             />
