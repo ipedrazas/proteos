@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { lazy, Suspense, useEffect, useMemo } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router';
 import { useMe } from './api/hooks';
 import { SessionExpiredError, type Me } from './api/client';
@@ -8,6 +8,13 @@ import { ConnectGitHub } from './routes/ConnectGitHub';
 import { Desktop } from './desktop/Desktop';
 import { MobileApp } from './mobile/MobileApp';
 import { PHONE_MEDIA_QUERY, shouldRedirectToMobile } from './mobileGate';
+import { resolveShell } from './shellChoice';
+
+// The console shell is code-split: it is an alternative UI running side by side
+// with the desktop, and a user on one should never download the other.
+const ConsoleApp = lazy(() =>
+  import('./console/ConsoleApp').then((m) => ({ default: m.ConsoleApp })),
+);
 
 export function App() {
   return (
@@ -22,15 +29,36 @@ export function App() {
         path="/m/:machineId/pr/:prNumber"
         element={<RequireAuth render={(me) => <MobileApp me={me} />} />}
       />
+      {/* Console shell (resource-oriented UI). It owns everything under
+          /console, routing the rest itself. */}
+      <Route
+        path="/console/*"
+        element={
+          <RequireAuth
+            render={(me) => (
+              <Suspense fallback={<div className="centered">Loading…</div>}>
+                <ConsoleApp me={me} />
+              </Suspense>
+            )}
+          />
+        }
+      />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
 
-// RootGate sends phones hitting the bare "/" to the mobile shell (TAV-79);
-// everyone else gets the desktop. Only this route is gated — deep links never
-// bounce and /m stays reachable from a desktop browser. "?desktop=1" is the
-// remembered escape hatch back to the desktop UI (see mobileGate.ts).
+// RootGate decides which shell a bare "/" opens, in two independent steps.
+//
+// First the phone check (TAV-79): phones hitting "/" go to the mobile shell.
+// Only this route is gated — deep links never bounce and /m stays reachable
+// from a desktop browser. "?desktop=1" is the remembered escape hatch back to
+// the desktop UI (see mobileGate.ts).
+//
+// Then the shell preference: a user who switched to the console gets the
+// console. The order matters — a phone gets the mobile shell regardless of a
+// console preference set earlier on a laptop, because the console targets a
+// desktop viewport (see shellChoice.ts).
 function RootGate() {
   const { search } = useLocation();
   const toMobile = useMemo(() => {
@@ -47,7 +75,17 @@ function RootGate() {
     }
   }, [search]);
 
+  const shell = useMemo(() => {
+    try {
+      return resolveShell(search, window.localStorage);
+    } catch {
+      // Same fail-open rationale as above.
+      return 'desktop' as const;
+    }
+  }, [search]);
+
   if (toMobile) return <Navigate to="/m" replace />;
+  if (shell === 'console') return <Navigate to="/console" replace />;
   return <RequireAuth render={(me) => <Desktop me={me} />} />;
 }
 

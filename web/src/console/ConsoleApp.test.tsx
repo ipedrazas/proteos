@@ -1,0 +1,106 @@
+// @vitest-environment jsdom
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { MemoryRouter, Route, Routes } from 'react-router';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { afterEach, describe, expect, it } from 'vitest';
+import type { Me } from '../api/client';
+import { ConsoleApp } from './ConsoleApp';
+
+// React needs this flag to recognize our act(...) wrapping under vitest.
+(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// Phase 0 ships the console shell with no service pages, so what is worth
+// pinning is exactly the shell's contract: /console resolves to a real page
+// rather than a blank frame, an unknown console path stays inside the console
+// instead of bouncing to another shell, and the admin entry is gated on the
+// role. Those three are the parts a later phase can silently break while every
+// page still renders fine on its own.
+
+function makeMe(overrides: Partial<Me> = {}): Me {
+  return {
+    user: { login: 'ada', email: 'ada@example.com', avatar_url: '' },
+    prefs: { download_as_is: false, claude_attribution: true, ssh_enabled: false },
+    machines: [],
+    machine_limit: 5,
+    github_connected: true,
+    is_admin: false,
+    ...overrides,
+  };
+}
+
+let cleanup: (() => void) | null = null;
+
+afterEach(() => {
+  cleanup?.();
+  cleanup = null;
+});
+
+function render(me: Me, path: string): HTMLDivElement {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  // A fresh QueryClient per render: ConsoleApp's TopBar holds a logout mutation,
+  // and sharing a client would leak state between cases.
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  act(() => {
+    root.render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route path="/console/*" element={<ConsoleApp me={me} />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  });
+  cleanup = () => {
+    act(() => root.unmount());
+    container.remove();
+  };
+  return container;
+}
+
+function pageTitle(container: HTMLElement): string {
+  return container.querySelector('.c-page-title')?.textContent ?? '';
+}
+
+function navLabels(container: HTMLElement): string[] {
+  return [...container.querySelectorAll('.c-nav-item')].map((el) => el.textContent ?? '');
+}
+
+describe('ConsoleApp', () => {
+  it('lands on Machines when opened at /console', () => {
+    expect(pageTitle(render(makeMe(), '/console'))).toBe('Machines');
+  });
+
+  it('renders the requested service page', () => {
+    expect(pageTitle(render(makeMe(), '/console/secrets'))).toBe('Secrets');
+  });
+
+  it('keeps an unknown console path inside the console', () => {
+    expect(pageTitle(render(makeMe(), '/console/nope'))).toBe('Machines');
+  });
+
+  it('marks the active nav entry', () => {
+    const container = render(makeMe(), '/console/keys');
+    const active = [...container.querySelectorAll('.c-nav-item-active')].map(
+      (el) => el.textContent,
+    );
+    expect(active).toEqual(['SSH keys']);
+  });
+
+  it('hides the Admin nav entry from a non-admin', () => {
+    expect(navLabels(render(makeMe(), '/console'))).not.toContain('Admin');
+  });
+
+  it('shows the Admin nav entry to an admin', () => {
+    expect(navLabels(render(makeMe({ is_admin: true }), '/console'))).toContain('Admin');
+  });
+
+  it('serves the Admin route to a non-admin rather than bouncing them', () => {
+    // The server is the access check; a non-admin who types the URL should see
+    // the page say so, not be silently redirected somewhere else.
+    expect(pageTitle(render(makeMe(), '/console/admin'))).toBe('Admin');
+  });
+});

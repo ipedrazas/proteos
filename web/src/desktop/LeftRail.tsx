@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { useNavigate } from 'react-router';
 import type { Me } from '../api/client';
 import { useSelectedMachine } from './selectedMachineStore';
 import { useWindowManager } from './windowManagerContext';
@@ -13,7 +14,8 @@ import {
   openSettings,
 } from './openers';
 import { focusedWindow, type WindowState } from './windowState';
-import { useClickOutside } from './useClickOutside';
+import { useClickOutside } from '../lib/useClickOutside';
+import { switchShell } from '../shellChoice';
 
 // LeftRail is the desktop's primary navigation: a persistent 76px column of
 // labeled icon buttons (Projects/Terminal/Agents/Activity/Logs/Sessions, then
@@ -193,6 +195,12 @@ export function LeftRail({
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   useClickOutside(accountOpen, [avatarRef, accountMenuRef], () => setAccountOpen(false));
 
+  const navigate = useNavigate();
+  const toConsole = () => {
+    switchShell('console');
+    navigate('/console');
+  };
+
   const focusedKind = focusedWindow(wm.windows, selectedId)?.kind;
   const activeKey =
     [
@@ -305,6 +313,12 @@ export function LeftRail({
       {accountOpen && (
         <div className="rail-account-menu" role="menu" ref={accountMenuRef}>
           <div className="rail-account-user">{me.user.login}</div>
+          <div className="machine-menu-sep" />
+          {/* The console is an alternative shell running side by side with this
+              one; the switch is remembered, so the next bare "/" lands there. */}
+          <button className="machine-menu-action" onClick={toConsole} role="menuitem">
+            Switch to console UI
+          </button>
           <div className="machine-menu-sep" />
           <button
             className="machine-menu-action"

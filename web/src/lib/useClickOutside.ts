@@ -1,11 +1,12 @@
 import { useEffect, type RefObject } from 'react';
 
-// useClickOutside closes chrome dropdowns (machine pill menu, rail account
-// menu). A backdrop div cannot do this job here: the rail and context bar use
-// `backdrop-filter`, which makes them containing blocks for position:fixed —
-// a backdrop rendered inside them pins to the bar instead of the viewport
-// (same quirk Modal.tsx portals around). A document-level listener has no
-// such stacking/containing-block constraints.
+// useClickOutside closes chrome dropdowns (the desktop's machine pill menu and
+// rail account menu, the console's account menu). A backdrop div cannot do this
+// job here: the desktop rail and context bar use `backdrop-filter`, which makes
+// them containing blocks for position:fixed — a backdrop rendered inside them
+// pins to the bar instead of the viewport (same quirk Modal.tsx portals
+// around). A document-level listener has no such stacking/containing-block
+// constraints.
 export function useClickOutside(
   active: boolean,
   refs: RefObject<HTMLElement | null>[],
