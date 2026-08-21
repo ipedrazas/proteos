@@ -988,6 +988,96 @@
   display: none;
 }
 
+/* --- Keys ------------------------------------------------------------------ */
+
+.c-app .c-switch-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: calc(var(--c-unit) * 3);
+}
+
+.c-app .c-switch-row .c-section-title {
+  margin-bottom: calc(var(--c-unit) * 0.75);
+}
+
+.c-app .c-switch-control {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--c-unit) * 1.5);
+  flex: none;
+}
+
+.c-app .c-keys-table {
+  margin-top: calc(var(--c-unit) * 2);
+}
+
+.c-app .c-keys-empty,
+.c-app .c-keys-note {
+  margin-top: calc(var(--c-unit) * 1.5);
+  font-size: 13px;
+}
+
+.c-app .c-keys-add {
+  margin-top: calc(var(--c-unit) * 2);
+}
+
+.c-app .c-col-action {
+  width: 1%;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Fingerprints are compared character by character, so they get a monospace
+   face — a proportional font makes SHA256:0O and 1l indistinguishable, which is
+   the one thing a fingerprint exists to prevent. */
+.c-app .c-fingerprint {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.c-app .c-key-form {
+  margin-top: calc(var(--c-unit) * 2);
+  padding-top: calc(var(--c-unit) * 2);
+  border-top: 1px solid var(--border);
+  max-width: 640px;
+}
+
+.c-app .c-textarea {
+  display: block;
+  width: 100%;
+  padding: calc(var(--c-unit) * 1.25);
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--c-radius);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.c-app .c-textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.c-app .c-field-hint {
+  display: block;
+  margin-top: calc(var(--c-unit) * 0.75);
+}
+
+.c-app .c-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--c-unit);
+  margin-top: calc(var(--c-unit) * 2);
+}
+
+.c-app .c-form-actions-left {
+  justify-content: flex-start;
+}
+
 /* --- Responsive ------------------------------------------------------------ */
 
 /* Below 1024px the side nav becomes a horizontal strip rather than eating a

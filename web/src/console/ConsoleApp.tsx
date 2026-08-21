@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router';
 import type { Me } from '../api/client';
 import { useMachineEvents } from '../api/hooks';
+import { KeysPage } from './keys/KeysPage';
 import { LaunchWizard } from './machines/LaunchWizard';
 import { MachineDetail } from './machines/MachineDetail';
 import { MachinesList } from './machines/MachinesList';
@@ -70,15 +71,7 @@ export function ConsoleApp({ me }: { me: Me }) {
                 />
               }
             />
-            <Route
-              path="keys"
-              element={
-                <Placeholder
-                  title="SSH keys"
-                  summary="The public keys authorised to log into your machines, the account-wide SSH switch, and the managed key your machines push to git hosts with."
-                />
-              }
-            />
+            <Route path="keys" element={<KeysPage me={me} />} />
             <Route
               path="secrets"
               element={
