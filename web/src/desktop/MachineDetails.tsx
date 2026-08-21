@@ -2,13 +2,8 @@ import type { MachineSummary, MachineTemplate } from '../api/client';
 import { ExposeAppPanel } from '../components/ExposeAppPanel';
 import { NetworkPolicyPanel } from '../components/NetworkPolicyPanel';
 import { MachineSshPanel } from '../components/SSHAccessPanel';
+import { gib } from '../lib/format';
 import { Modal } from './Modal';
-
-function gib(mib: number | undefined): string {
-  if (mib === undefined) return '—';
-  const g = mib / 1024;
-  return `${Number.isInteger(g) ? g : g.toFixed(1)} GiB`;
-}
 
 function formatDate(iso: string): string {
   if (!iso) return '—';

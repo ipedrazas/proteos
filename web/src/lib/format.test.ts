@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatAge } from './formatAge';
+import { formatAge, gib } from './format';
 
 const SEC = 1000;
 const MIN = 60 * SEC;
@@ -39,5 +39,21 @@ describe('formatAge', () => {
   // which must not surface as "-3m ago".
   it('reads clock skew as "just now" rather than a negative age', () => {
     expect(formatAge(-5 * MIN)).toBe('just now');
+  });
+});
+
+describe('gib', () => {
+  it('renders whole gibibytes without a decimal', () => {
+    expect(gib(2048)).toBe('2 GiB');
+    expect(gib(1024)).toBe('1 GiB');
+  });
+
+  it('renders a fraction to one decimal', () => {
+    expect(gib(1536)).toBe('1.5 GiB');
+  });
+
+  it('renders an absent size as an em dash', () => {
+    // disk_mib is null until a machine has a disk; "undefined GiB" is worse.
+    expect(gib(undefined)).toBe('—');
   });
 });

@@ -20,3 +20,13 @@ export function formatAge(deltaMs: number): string {
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
 }
+
+// gib renders a MiB value as a compact GiB string (2048 → "2 GiB"), which is
+// how every surface in the app shows memory and disk. Undefined renders as an
+// em dash: a machine's disk_mib is null before it has one, and "undefined GiB"
+// in a table is worse than an honest blank.
+export function gib(mib: number | undefined): string {
+  if (mib === undefined || mib === null) return '—';
+  const g = mib / 1024;
+  return `${Number.isInteger(g) ? g : g.toFixed(1)} GiB`;
+}
