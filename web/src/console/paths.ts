@@ -14,7 +14,7 @@ export const MACHINES_LAUNCH = '/console/machines/launch';
 
 // The id is encoded: it is a UUID today, but a path helper that assumes its
 // input is URL-safe is a bug waiting for the day it is not.
-export function machinePath(id: string): string {
+function machinePath(id: string): string {
   return `${MACHINES}/${encodeURIComponent(id)}`;
 }
 
@@ -25,6 +25,8 @@ export const MACHINE_TABS = [
   { key: 'overview', label: 'Overview' },
   { key: 'connect', label: 'Connect' },
   { key: 'terminal', label: 'Terminal' },
+  { key: 'networking', label: 'Networking' },
+  { key: 'activity', label: 'Activity' },
 ] as const;
 
 export type MachineTab = (typeof MACHINE_TABS)[number]['key'];

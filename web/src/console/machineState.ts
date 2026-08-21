@@ -11,7 +11,7 @@
 
 import type { MachineState } from '../api/client';
 
-export type StateTone = 'ok' | 'pending' | 'idle' | 'danger';
+type StateTone = 'ok' | 'pending' | 'idle' | 'danger';
 
 export interface StatePresentation {
   label: string;

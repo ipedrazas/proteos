@@ -1167,6 +1167,229 @@
   margin-top: calc(var(--c-unit) * 2);
 }
 
+/* --- Networking ------------------------------------------------------------ */
+
+.c-app .c-modes {
+  margin: calc(var(--c-unit) * 2) 0;
+  padding: 0;
+  border: none;
+  display: grid;
+  gap: var(--c-unit);
+}
+
+/* A <legend> is not a grid item and ignores the fieldset's gap, so it needs its
+   own spacing or it sits flush against the paragraph above. */
+.c-app .c-modes legend {
+  padding: 0;
+  margin-bottom: var(--c-unit);
+}
+
+.c-app .c-mode {
+  display: flex;
+  gap: var(--c-unit);
+  align-items: flex-start;
+  padding: calc(var(--c-unit) * 1.25);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--c-radius);
+  cursor: pointer;
+}
+
+.c-app .c-mode:hover {
+  background: var(--c-hover);
+}
+
+.c-app .c-mode-label {
+  display: block;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.c-app .c-mode-hint {
+  display: block;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.c-app .c-banner-ok {
+  color: var(--c-ok);
+  background: rgba(63, 185, 80, 0.1);
+  border: 1px solid rgba(63, 185, 80, 0.4);
+}
+
+.c-app .c-banner-warn {
+  color: var(--c-pending);
+  background: rgba(210, 153, 34, 0.1);
+  border: 1px solid rgba(210, 153, 34, 0.4);
+}
+
+/* --- Activity feed --------------------------------------------------------- */
+
+.c-app .c-feed {
+  margin: calc(var(--c-unit) * 2) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.c-app .c-feed-row {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--c-unit) * 1.5);
+  padding: calc(var(--c-unit) * 0.75) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.c-app .c-feed-row:last-child {
+  border-bottom: none;
+}
+
+/* Tabular numerals so the timestamp column does not shimmer as digits change. */
+.c-app .c-feed-time {
+  flex: none;
+  width: 80px;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+.c-app .c-feed-machine {
+  flex: none;
+  width: 140px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.c-app .c-feed-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.c-app .c-feed-ok {
+  color: var(--c-ok);
+}
+
+.c-app .c-feed-error {
+  color: var(--c-danger);
+}
+
+.c-app .c-feed-pending {
+  color: var(--c-pending);
+}
+
+.c-app .c-log-feed {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.c-app .c-log-level {
+  flex: none;
+  width: 52px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.c-app .c-log-error {
+  color: var(--c-danger);
+}
+
+.c-app .c-log-warn {
+  color: var(--c-pending);
+}
+
+.c-app .c-log-source {
+  flex: none;
+  width: 32px;
+  font-size: 11px;
+}
+
+/* --- Templates ------------------------------------------------------------- */
+
+.c-app .c-template-row-desc {
+  display: block;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+/* --- Admin ----------------------------------------------------------------- */
+
+.c-app .c-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--c-unit);
+  margin-bottom: calc(var(--c-unit) * 2);
+}
+
+.c-app .c-stat {
+  padding: calc(var(--c-unit) * 2);
+  background: var(--c-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--c-radius);
+}
+
+.c-app .c-stat-emphasis {
+  border-color: rgba(63, 185, 80, 0.5);
+}
+
+.c-app .c-stat-value {
+  display: block;
+  font-size: 28px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.c-app .c-stat-label {
+  display: block;
+  margin-top: calc(var(--c-unit) * 0.5);
+  font-size: 12px;
+}
+
+.c-app .c-state-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--c-unit) * 2);
+}
+
+.c-app .c-state-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--c-unit) * 0.75);
+  font-size: 13px;
+}
+
+.c-app .c-state-chip-zero {
+  opacity: 0.45;
+}
+
+.c-app .c-state-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.c-app .c-state-dot-ok {
+  background: var(--c-ok);
+}
+
+.c-app .c-state-dot-pending {
+  background: var(--c-pending);
+}
+
+.c-app .c-state-dot-danger {
+  background: var(--c-danger);
+}
+
+.c-app .c-state-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.c-app .c-owner-email {
+  font-size: 12px;
+}
+
 /* --- Responsive ------------------------------------------------------------ */
 
 /* Below 1024px the side nav becomes a horizontal strip rather than eating a

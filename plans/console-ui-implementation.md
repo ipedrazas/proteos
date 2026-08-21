@@ -204,6 +204,13 @@ the action buttons (Start / Stop / Connect / Terminate) with the same enablement
 - **Activity:** this machine's events from the SSE ring, newest first, with state
   transitions rendered as `from → to`.
 
+  *Attribution had to be added.* Event rows carry no machine column server-side, and
+  `useMachineEvents` was discarding the pairing the live SSE frame provides. It now records
+  `machine_id`/`machine_name` for live events (additively — the desktop's feed is
+  unaffected). Snapshot-replayed events are a flat backfill with no pairing, so they stay
+  unattributed and the fleet feed shows `—` for them. There is no per-machine history
+  endpoint, so this tab covers the current session only, and its empty state says so.
+
 **Terminate** reuses the existing guarded flow's semantics: confirm → server-side session
 export → on `session_export_failed`, offer "Force delete anyway" (`force: true`). Port the
 state machine from `DestroyMachineDialog.tsx`; do not re-derive it.
@@ -328,9 +335,20 @@ All five tabs. Write-only discipline everywhere; the one-time token reveal.
 *Done when:* a provider key set from the console makes an agent run on a machine.
 
 **Phase 6 — Networking, Activity, Templates, Admin, polish.**
-The remaining tabs plus: keyboard navigation on the table, focus management in dialogs,
-`aria-*` on tabs/badges, responsive collapse of the left nav below 1024px, and a pass on
-loading/empty/error states across every screen.
+The remaining tabs plus: focus management in dialogs, honest semantics on the detail
+sections, responsive collapse of the left nav below 1024px, and a pass on loading/empty/error
+states across every screen.
+
+Two corrections made here:
+
+- The detail section switcher is **not** an ARIA tablist. That contract promises arrow-key
+  navigation, a matching tabpanel and `aria-controls`; these are links that change the URL.
+  `aria-current="page"` says the true thing, and a screen reader announcing "tab" for
+  something that navigates is a worse lie than plain links are a limitation.
+- The admin state histogram uses **raw state names**, not `StateBadge`. The badge collapses
+  eight API states into four labels — correct on a machine row, destructive in a histogram,
+  where it rendered "Pending 0, Pending 1, Pending 0". An admin wants the distinction:
+  machines stuck in `requested` is a different alarm from `starting`.
 
 **Phase 7 — Default-shell decision + docs.**
 Decide whether `/` defaults to the console. Update `README.md` and `docs/architecture.md`
