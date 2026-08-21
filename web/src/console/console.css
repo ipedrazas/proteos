@@ -842,6 +842,152 @@
   border-top: 1px solid var(--border);
 }
 
+/* --- Detail tabs ----------------------------------------------------------- */
+
+.c-app .c-tabs {
+  display: flex;
+  gap: calc(var(--c-unit) * 2);
+  margin-bottom: calc(var(--c-unit) * 2);
+  border-bottom: 1px solid var(--border);
+}
+
+.c-app .c-tab {
+  padding: var(--c-unit) 0;
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: none;
+  /* The active marker overlaps the strip's own border rather than adding to it,
+     so the row does not shift by a pixel when the selection moves. */
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.c-app .c-tab:hover {
+  color: var(--text);
+}
+
+.c-app .c-tab-active {
+  color: var(--text);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+/* --- Connect --------------------------------------------------------------- */
+
+.c-app .c-connect-action {
+  margin-top: calc(var(--c-unit) * 1.5);
+}
+
+.c-app .c-connect-blocked {
+  margin-top: calc(var(--c-unit) * 1.5);
+  font-size: 13px;
+}
+
+.c-app .c-code {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--c-unit);
+  margin: var(--c-unit) 0 calc(var(--c-unit) * 2);
+  padding: calc(var(--c-unit) * 1.25);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--c-radius);
+}
+
+.c-app .c-code-text {
+  flex: 1;
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* --- Terminal -------------------------------------------------------------- */
+
+/* The terminal fills the console's content area. Height is computed rather than
+   100% because every ancestor up to .c-main is auto-height — a percentage would
+   collapse to zero and xterm would render a terminal with no rows. */
+.c-app .c-terminal-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - var(--c-topbar-h) - 210px);
+  min-height: 320px;
+}
+
+.c-app .c-session-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--c-unit);
+  margin-bottom: var(--c-unit);
+  flex-wrap: wrap;
+}
+
+.c-app .c-session {
+  display: inline-flex;
+  align-items: center;
+  background: var(--c-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--c-radius);
+  overflow: hidden;
+}
+
+.c-app .c-session-active {
+  border-color: var(--accent);
+}
+
+.c-app .c-session-name {
+  padding: calc(var(--c-unit) * 0.5) calc(var(--c-unit) * 1.25);
+  background: transparent;
+  color: var(--text);
+  border: none;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.c-app .c-session-close {
+  padding: 0 calc(var(--c-unit) * 0.75);
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.c-app .c-session-close:hover {
+  color: var(--c-danger);
+}
+
+.c-app .c-session-add {
+  height: 26px;
+  font-size: 12px;
+}
+
+.c-app .c-terminal-panes {
+  flex: 1;
+  min-height: 0;
+  background: #0b0e14;
+  border: 1px solid var(--border);
+  border-radius: var(--c-radius);
+  overflow: hidden;
+}
+
+.c-app .c-terminal-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Hidden, not unmounted: unmounting drops the session's WebSocket, and the
+   guest replays its scrollback on reconnect — so flipping between two shells
+   would redraw each one's history every time. */
+.c-app .c-terminal-pane.c-hidden {
+  display: none;
+}
+
 /* --- Responsive ------------------------------------------------------------ */
 
 /* Below 1024px the side nav becomes a horizontal strip rather than eating a

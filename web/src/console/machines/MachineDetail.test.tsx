@@ -49,7 +49,7 @@ afterEach(() => {
   cleanup = null;
 });
 
-function render(machines: MachineSummary[], id = ID): HTMLDivElement {
+function render(machines: MachineSummary[], id = ID, tab = 'overview'): HTMLDivElement {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -59,10 +59,11 @@ function render(machines: MachineSummary[], id = ID): HTMLDivElement {
   act(() => {
     root.render(
       <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={[`/console/machines/${id}/overview`]}>
+        <MemoryRouter initialEntries={[`/console/machines/${id}/${tab}`]}>
           <Routes>
+            {/* Mirrors ConsoleApp: one route, the tab as a param. */}
             <Route
-              path="/console/machines/:id/overview"
+              path="/console/machines/:id/:tab"
               element={<MachineDetail me={makeMe(machines)} />}
             />
           </Routes>
@@ -165,5 +166,64 @@ describe('MachineDetail', () => {
     });
     expect(c.querySelector('input[aria-label="Machine name"]')).toBeNull();
     expect(c.querySelector('.c-page-title')?.textContent).toBe('api-dev');
+  });
+
+  it('renders the tab strip with every tab', () => {
+    const labels = [...render([machine()]).querySelectorAll('.c-tab')].map((t) => t.textContent);
+    expect(labels).toEqual(['Overview', 'Connect', 'Terminal']);
+  });
+
+  it('marks the tab from the URL as selected', () => {
+    const c = render([machine()], ID, 'connect');
+    expect(c.querySelector('.c-tab-active')?.textContent).toBe('Connect');
+  });
+
+  it('renders the connect tab, not the overview, when asked for it', () => {
+    const c = render([machine()], ID, 'connect');
+    expect(c.textContent).toContain('Web terminal');
+    expect(c.textContent).not.toContain('Storage and boot');
+  });
+
+  it('falls back to Overview for an unknown tab', () => {
+    // A stale bookmark from before a tab was renamed should land somewhere
+    // meaningful rather than rendering an empty body.
+    const c = render([machine()], ID, 'nope');
+    expect(c.querySelector('.c-tab-active')?.textContent).toBe('Overview');
+  });
+
+  it('blocks the terminal on a stopped machine and offers to start it', () => {
+    // TAV-185: the gateway's 409 is invisible to the browser, so the UI has to
+    // supply the reason the protocol throws away.
+    const c = render([machine({ state: 'stopped' })], ID, 'terminal');
+    expect(c.textContent).toContain('Terminal unavailable');
+    expect(c.textContent).toContain('Start it to open a terminal');
+    expect([...c.querySelectorAll('button')].some((b) => b.textContent === 'Start machine')).toBe(
+      true,
+    );
+  });
+
+  it('blocks the terminal mid-transition without offering Start', () => {
+    const c = render([machine({ state: 'provisioning' })], ID, 'terminal');
+    expect(c.textContent).toContain('opens once it is running');
+    expect([...c.querySelectorAll('button')].some((b) => b.textContent === 'Start machine')).toBe(
+      false,
+    );
+  });
+
+  it('tells the connect tab the terminal is unavailable too', () => {
+    const c = render([machine({ state: 'stopped' })], ID, 'connect');
+    expect(c.textContent).toContain('Start it to open a terminal');
+    expect([...c.querySelectorAll('a')].some((a) => a.textContent === 'Open terminal')).toBe(false);
+  });
+
+  it('offers the terminal link from connect when the machine is running', () => {
+    const c = render([machine({ state: 'running' })], ID, 'connect');
+    expect([...c.querySelectorAll('a')].some((a) => a.textContent === 'Open terminal')).toBe(true);
+  });
+
+  it('shows this machine’s own ssh command', () => {
+    const c = render([machine()], ID, 'connect');
+    expect(c.textContent).toContain(`proteos ssh ${ID}`);
+    expect(c.textContent).toContain(`ProxyCommand proteos ssh-proxy ${ID}`);
   });
 });

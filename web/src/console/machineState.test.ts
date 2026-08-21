@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MachineState } from '../api/client';
-import { canTerminate, describeState, machineActions } from './machineState';
+import { canTerminate, describeState, machineActions, terminalGate } from './machineState';
 
 const ALL_STATES: MachineState[] = [
   'requested',
@@ -81,5 +81,34 @@ describe('machineActions', () => {
 describe('canTerminate', () => {
   it('allows terminating in any state, including busy ones', () => {
     expect(canTerminate()).toBe(true);
+  });
+});
+
+describe('terminalGate', () => {
+  it('allows a running machine', () => {
+    expect(terminalGate('running')).toEqual({ ok: true, reason: '', offerStart: false });
+  });
+
+  it('blocks every state that is not running', () => {
+    for (const s of ALL_STATES.filter((x) => x !== 'running')) {
+      expect(terminalGate(s).ok).toBe(false);
+      expect(terminalGate(s).reason).not.toBe('');
+    }
+  });
+
+  it('offers Start only for a stopped machine', () => {
+    const offering = ALL_STATES.filter((s) => terminalGate(s).offerStart);
+    expect(offering).toEqual(['stopped']);
+  });
+
+  it('names the transition it is waiting on', () => {
+    // "Pending" reads as progress; a generic "cannot connect" reads as broken.
+    expect(terminalGate('provisioning').reason).toContain('pending');
+    expect(terminalGate('stopping').reason).toContain('stopping');
+  });
+
+  it('does not offer Start for a machine in error', () => {
+    expect(terminalGate('error').offerStart).toBe(false);
+    expect(terminalGate('error').reason).toContain('error state');
   });
 });

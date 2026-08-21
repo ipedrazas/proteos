@@ -70,3 +70,45 @@ export function machineActions(state: MachineState): MachineActions {
 export function canTerminate(): boolean {
   return true;
 }
+
+// TerminalGate answers whether a machine can take a terminal connection right
+// now, and what to say if not.
+//
+// This exists because the browser cannot tell the difference (TAV-185). The
+// gateway refuses a non-running machine with 409 machine_not_running, but the
+// WebSocket API hides every pre-upgrade HTTP status — so an ungated terminal on
+// a stopped machine looks exactly like a flaky network: five silent reconnect
+// attempts with backoff, then a generic "closed". The refusal is correct and
+// the UI has to supply the explanation the protocol throws away.
+export interface TerminalGate {
+  ok: boolean;
+  reason: string;
+  // offerStart is true when the fix is simply to start the machine, so the
+  // blocked panel can carry the action instead of sending the user elsewhere.
+  offerStart: boolean;
+}
+
+export function terminalGate(state: MachineState): TerminalGate {
+  if (state === 'running') return { ok: true, reason: '', offerStart: false };
+  if (state === 'stopped') {
+    return {
+      ok: false,
+      reason: 'This machine is stopped. Start it to open a terminal.',
+      offerStart: true,
+    };
+  }
+  if (state === 'error') {
+    return {
+      ok: false,
+      reason: 'This machine is in an error state and cannot accept connections.',
+      offerStart: false,
+    };
+  }
+  // Every remaining state is a transition the control plane is working through.
+  // Say which one, so the wait reads as progress rather than as a hang.
+  return {
+    ok: false,
+    reason: `This machine is ${describeState(state).label.toLowerCase()}. The terminal opens once it is running.`,
+    offerStart: false,
+  };
+}

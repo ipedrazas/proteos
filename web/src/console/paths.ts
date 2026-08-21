@@ -18,6 +18,25 @@ export function machinePath(id: string): string {
   return `${MACHINES}/${encodeURIComponent(id)}`;
 }
 
+// The machine detail tabs, in display order. One array drives the tab strip,
+// the route's validation, and the path helper, so a tab cannot exist in the URL
+// without existing in the strip.
+export const MACHINE_TABS = [
+  { key: 'overview', label: 'Overview' },
+  { key: 'connect', label: 'Connect' },
+  { key: 'terminal', label: 'Terminal' },
+] as const;
+
+export type MachineTab = (typeof MACHINE_TABS)[number]['key'];
+
+export function isMachineTab(value: string | undefined): value is MachineTab {
+  return MACHINE_TABS.some((t) => t.key === value);
+}
+
+export function machineTabPath(id: string, tab: MachineTab): string {
+  return `${machinePath(id)}/${tab}`;
+}
+
 export function machineOverviewPath(id: string): string {
-  return `${machinePath(id)}/overview`;
+  return machineTabPath(id, 'overview');
 }

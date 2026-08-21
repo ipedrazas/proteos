@@ -293,16 +293,22 @@ rename, `last_error` callout.
 *Done when:* a machine can be created from the console with a non-default template and
 overridden resources, and the resulting detail page shows exactly what was requested.
 
-*Shipped without the tab strip.* Overview is the only tab that exists until Phase 3, and a
-strip of three "not built yet" tabs is worse than no strip. The URLs are already tabbed
-(`/machines/:id/overview`, with `/machines/:id` redirecting to it), so Phase 3 adds
-siblings without changing any link that exists today.
+*Shipped without the tab strip.* Overview was the only tab that existed, and a strip of
+three "not built yet" tabs is worse than no strip. The URLs were already tabbed, so Phase 3
+added the siblings without changing a link. **Landed in Phase 3.**
 
 **Phase 3 — Connect + web terminal.**
 Connect chooser, full-page terminal with a multi-session tab strip, the stopped-machine
 guard, the editor hand-off via one-shot web session.
 *Done when:* two terminal tabs on one machine hold independent sessions and survive a
 reconnect (kill the socket in devtools; scrollback replays without duplication).
+
+*Known limitation.* Leaving the Terminal tab unmounts it, dropping its sockets; returning
+reopens `main` only, so extra shells are forgotten by the UI. Session ids are deterministic,
+so `main` resumes its own PTY — but a second shell has to be reopened. Keeping the tab
+mounted across the whole detail page would fix it and is deliberately not done here: it
+means rendering every tab at once, which is a bigger structural change than this phase
+warrants. Revisit if people actually keep several shells open.
 
 **Phase 4 — SSH keys.**
 SSH master switch with the kill-switch confirm, login-key table + add/revoke, the managed
