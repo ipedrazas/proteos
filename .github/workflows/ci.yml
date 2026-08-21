@@ -261,7 +261,22 @@ jobs:
 
   # CodeQL static analysis for Go (all workspace modules) and TypeScript (web/).
   # Requires security-events: write to upload SARIF results to the Security tab.
+  #
+  # Gated on the repository being public, because uploading those results is
+  # code scanning, and code scanning on a PRIVATE repo needs GitHub Advanced
+  # Security — Enterprise Cloud or a paid Code Security add-on, neither of which
+  # a free-plan org has. It is free for public repos only. While proteos is
+  # private this job cannot pass: the analysis itself runs fine and finds
+  # nothing, then the upload fails with "Advanced Security must be enabled for
+  # this repository to use code scanning".
+  #
+  # Skipping is deliberately preferred over continue-on-error (which would
+  # report a misleading near-green for a job that never uploads) and over
+  # deleting the job (which would lose the config). Written as a visibility
+  # check rather than a hardcoded disable so it starts running by itself the day
+  # the repo goes public — nothing to remember.
   codeql:
+    if: github.event.repository.visibility == 'public'
     name: CodeQL (${{ matrix.language }})
     runs-on: ubuntu-latest
     permissions:
