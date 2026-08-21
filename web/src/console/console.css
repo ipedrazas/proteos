@@ -13,7 +13,11 @@
    The visual message is "control panel", not "desktop": flat panels, 1px
    borders, small radii, no shadows, no drag affordances. */
 
-.c-app {
+/* Tokens live on both roots. The dialog portals to document.body, outside
+   .c-app, so without .c-portal here every scoped rule below would miss it and
+   the dialog would render unstyled — the failure mode scoping always has. */
+.c-app,
+.c-portal {
   /* Surfaces. --c-surface sits between the page background and the desktop's
      --panel so a panel on the page reads as raised without a shadow. */
   --c-surface: #161b22;
@@ -25,12 +29,15 @@
   --c-pending: #d29922;
   --c-danger: var(--error);
 
-  /* Density. One 8px unit; 32px table rows come later from --c-row-h. */
+  /* Density. One 8px unit; 32px table rows. */
   --c-unit: 8px;
   --c-radius: 6px;
   --c-topbar-h: 48px;
   --c-sidenav-w: 232px;
+  --c-row-h: 32px;
+}
 
+.c-app {
   height: 100dvh;
   display: flex;
   flex-direction: column;
@@ -241,6 +248,350 @@
 .c-app .c-placeholder-note {
   margin-top: var(--c-unit);
   font-size: 13px;
+}
+
+/* --- Controls -------------------------------------------------------------- */
+
+.c-app .c-btn,
+.c-portal .c-btn {
+  display: inline-flex;
+  align-items: center;
+  height: var(--c-row-h);
+  padding: 0 calc(var(--c-unit) * 1.5);
+  background: var(--c-surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--c-radius);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.c-app .c-btn:hover:not(:disabled),
+.c-portal .c-btn:hover:not(:disabled) {
+  background: var(--c-hover);
+}
+
+.c-app .c-btn:disabled,
+.c-portal .c-btn:disabled,
+.c-app .c-btn-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.c-app .c-btn-primary,
+.c-portal .c-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.c-app .c-btn-primary:hover:not(:disabled),
+.c-portal .c-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+/* Danger is outlined, not filled. Terminate sits next to Start and Stop in the
+   action bar, and a solid red block there reads as the primary action of the
+   page — the opposite of what it should look like. */
+.c-app .c-btn-danger,
+.c-portal .c-btn-danger {
+  color: var(--c-danger);
+  border-color: rgba(248, 81, 73, 0.5);
+}
+
+.c-app .c-btn-danger:hover:not(:disabled),
+.c-portal .c-btn-danger:hover:not(:disabled) {
+  background: rgba(248, 81, 73, 0.12);
+}
+
+.c-app .c-btn-link {
+  height: auto;
+  padding: 0;
+  margin-top: var(--c-unit);
+  background: none;
+  border: none;
+  color: var(--accent);
+}
+
+.c-app .c-input,
+.c-app .c-select {
+  height: var(--c-row-h);
+  padding: 0 calc(var(--c-unit) * 1.25);
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--c-radius);
+  font: inherit;
+  font-size: 13px;
+}
+
+.c-app .c-input {
+  min-width: 260px;
+}
+
+.c-app .c-input:focus,
+.c-app .c-select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* --- Page header + toolbar ------------------------------------------------- */
+
+.c-app .c-page-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: calc(var(--c-unit) * 2);
+}
+
+.c-app .c-page-sub {
+  margin-top: calc(var(--c-unit) * 0.5);
+  font-size: 13px;
+}
+
+.c-app .c-page-header-actions {
+  display: flex;
+  gap: var(--c-unit);
+}
+
+.c-app .c-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--c-unit);
+  margin-bottom: calc(var(--c-unit) * 1.5);
+  flex-wrap: wrap;
+}
+
+.c-app .c-toolbar-spacer {
+  flex: 1;
+}
+
+.c-app .c-selection-count {
+  font-size: 13px;
+}
+
+/* --- Table ----------------------------------------------------------------- */
+
+.c-app .c-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--c-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--c-radius);
+  font-size: 13px;
+}
+
+.c-app .c-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: var(--c-unit) calc(var(--c-unit) * 1.5);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.c-app .c-table td {
+  height: var(--c-row-h);
+  padding: calc(var(--c-unit) * 0.75) calc(var(--c-unit) * 1.5);
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.c-app .c-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.c-app .c-row:hover {
+  background: var(--c-hover);
+}
+
+.c-app .c-row-selected {
+  background: rgba(47, 129, 247, 0.1);
+}
+
+.c-app .c-col-check {
+  width: 36px;
+}
+
+.c-app .c-nowrap {
+  white-space: nowrap;
+}
+
+.c-app .c-machine-name {
+  font-weight: 600;
+}
+
+.c-app .c-row-mark {
+  font-size: 12px;
+}
+
+.c-app .c-row-mark-failed {
+  color: var(--c-danger);
+}
+
+/* The machine's last_error, inline and clipped: enough to see something is
+   wrong and roughly what, with the full text on hover. A wrapped stack trace
+   would blow the row height out and wreck the density the table exists for. */
+.c-app .c-row-error {
+  display: inline-block;
+  max-width: 320px;
+  margin-left: var(--c-unit);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  color: var(--c-danger);
+  font-size: 12px;
+}
+
+.c-app .c-table-note {
+  margin-top: var(--c-unit);
+  font-size: 12px;
+}
+
+/* --- State badge ----------------------------------------------------------- */
+
+.c-app .c-badge,
+.c-portal .c-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--c-unit) * 0.75);
+  white-space: nowrap;
+}
+
+.c-app .c-badge-dot,
+.c-portal .c-badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: none;
+}
+
+.c-app .c-badge-ok .c-badge-dot {
+  background: var(--c-ok);
+}
+
+.c-app .c-badge-pending .c-badge-dot {
+  background: var(--c-pending);
+}
+
+.c-app .c-badge-danger .c-badge-dot {
+  background: var(--c-danger);
+}
+
+.c-app .c-badge-danger {
+  color: var(--c-danger);
+}
+
+.c-app .c-badge-dot-busy {
+  animation: c-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes c-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* Respect a reduced-motion preference: the badge still reads as pending from
+   its colour and label, so the pulse is decoration we can simply drop. */
+@media (prefers-reduced-motion: reduce) {
+  .c-app .c-badge-dot-busy {
+    animation: none;
+  }
+}
+
+/* --- Banners + empty states ------------------------------------------------ */
+
+.c-app .c-banner {
+  margin: 0 0 calc(var(--c-unit) * 1.5);
+  padding: calc(var(--c-unit) * 1.25) calc(var(--c-unit) * 1.5);
+  border-radius: var(--c-radius);
+  font-size: 13px;
+}
+
+.c-app .c-banner-error {
+  color: var(--c-danger);
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid rgba(248, 81, 73, 0.4);
+}
+
+.c-app .c-empty {
+  max-width: 560px;
+}
+
+.c-app .c-empty-title {
+  margin: 0 0 var(--c-unit);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.c-app .c-empty .c-btn {
+  margin-top: calc(var(--c-unit) * 2);
+}
+
+/* --- Dialog ---------------------------------------------------------------- */
+
+.c-portal .c-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: calc(var(--c-unit) * 2);
+  background: rgba(1, 4, 9, 0.7);
+}
+
+.c-portal .c-dialog {
+  width: min(520px, 100%);
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: calc(var(--c-unit) * 2.5);
+  background: var(--c-surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--c-radius);
+  font-size: 14px;
+}
+
+.c-portal .c-dialog-title {
+  margin: 0 0 calc(var(--c-unit) * 1.5);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.c-portal .c-dialog-warning {
+  margin: 0 0 calc(var(--c-unit) * 1.5);
+  color: var(--text);
+}
+
+.c-portal .c-dialog-list {
+  margin: 0 0 calc(var(--c-unit) * 2);
+  padding-left: calc(var(--c-unit) * 2.5);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.c-portal .c-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--c-unit);
+}
+
+.c-portal .c-muted {
+  color: var(--muted);
+  margin: 0;
 }
 
 /* --- Responsive ------------------------------------------------------------ */

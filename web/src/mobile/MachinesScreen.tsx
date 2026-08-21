@@ -12,6 +12,7 @@ import {
   useMachineMutations,
   useTemplates,
 } from '../api/hooks';
+import { gib } from '../lib/format';
 import { CloseIcon, PlayIcon, StopIcon } from './icons';
 
 // Transitional states render an amber dot + spinner instead of a control.
@@ -25,12 +26,6 @@ const transitional: MachineState[] = [
 
 function isTransitional(state: MachineState): boolean {
   return transitional.includes(state);
-}
-
-// gib renders a MiB value as a compact GiB string (2048 → "2 GiB").
-function gib(mib: number): string {
-  const g = mib / 1024;
-  return `${Number.isInteger(g) ? g : g.toFixed(1)} GiB`;
 }
 
 function stateLabel(state: MachineState): string {

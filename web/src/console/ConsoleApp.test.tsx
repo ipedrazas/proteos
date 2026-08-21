@@ -3,12 +3,30 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Me } from '../api/client';
 import { ConsoleApp } from './ConsoleApp';
 
 // React needs this flag to recognize our act(...) wrapping under vitest.
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// jsdom has no EventSource, and ConsoleApp opens the machines SSE stream on
+// mount. Stub it rather than moving the subscription: one stream for the whole
+// console is the design (see ConsoleApp), and the stub lets the tests assert
+// that it really is one.
+class FakeEventSource {
+  static opened: string[] = [];
+  static closed = 0;
+  constructor(url: string) {
+    FakeEventSource.opened.push(url);
+  }
+  addEventListener() {}
+  removeEventListener() {}
+  close() {
+    FakeEventSource.closed += 1;
+  }
+}
+(globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
 
 // Phase 0 ships the console shell with no service pages, so what is worth
 // pinning is exactly the shell's contract: /console resolves to a real page
@@ -30,6 +48,11 @@ function makeMe(overrides: Partial<Me> = {}): Me {
 }
 
 let cleanup: (() => void) | null = null;
+
+beforeEach(() => {
+  FakeEventSource.opened = [];
+  FakeEventSource.closed = 0;
+});
 
 afterEach(() => {
   cleanup?.();
@@ -96,6 +119,16 @@ describe('ConsoleApp', () => {
 
   it('shows the Admin nav entry to an admin', () => {
     expect(navLabels(render(makeMe({ is_admin: true }), '/console'))).toContain('Admin');
+  });
+
+  it('opens exactly one machine-event stream for the whole console', () => {
+    // Every console route wants live machine state, so the subscription sits in
+    // the shell. One per mount — not one per page — and it closes on unmount.
+    render(makeMe(), '/console/secrets');
+    expect(FakeEventSource.opened).toHaveLength(1);
+    cleanup?.();
+    cleanup = null;
+    expect(FakeEventSource.closed).toBe(1);
   });
 
   it('serves the Admin route to a non-admin rather than bouncing them', () => {

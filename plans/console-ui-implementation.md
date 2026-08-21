@@ -142,9 +142,20 @@ The centrepiece. A dense table, not cards.
   `Launch machine` primary button. The count reads `N of {me.machine_limit}`; the launch
   button is disabled with an explanatory tooltip at the cap.
 - **Action bar** (enabled by selection): Start · Stop · Connect · Terminate.
-  Enablement matrix: Start only when every selected machine is `stopped`; Stop only when
-  every selected is `running`; Connect only for a single `running` selection; Terminate
-  always (guarded).
+
+  Start and Stop apply to the eligible **subset** of the selection, not all-or-nothing:
+  select everything, hit Start, and the stopped ones start — what EC2 does and what people
+  mean. The cost is ambiguity about how many machines a click touches, paid for by putting
+  the count on the button whenever it is acting on less than the full selection
+  (`Start (2)`). Both are non-destructive, so acting on a subset is recoverable.
+
+  Terminate deliberately does **not** work that way: it applies to everything selected and
+  the dialog names every machine before anything happens. A destructive action must never
+  quietly act on a subset. Connect requires a single `running` selection.
+
+  *(Revised in Phase 1 from the original all-or-nothing rule, which a test caught as a
+  divergence from the implementation. All-or-nothing is more predictable but makes a
+  select-all-then-Start impossible, which is the common case.)*
 - **Bulk actions are a client-side fan-out.** There is no bulk start/stop endpoint —
   only `DELETE /api/machines` (destroy *all*, not a subset) and `POST /api/machines/fill`.
   Fan out individual calls with a concurrency cap of 4, render per-row progress in the

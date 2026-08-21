@@ -6,7 +6,7 @@ import {
   type AdminOverview,
   type MachineState,
 } from '../api/client';
-import { formatAge } from './formatAge';
+import { formatAge } from '../lib/format';
 
 // AdminWindow is the fleet console: how many machines exist, how many are in
 // use, and who owns them. It is READ-ONLY by design — this is the one screen

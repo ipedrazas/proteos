@@ -1,13 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ApiError, type MachineSummary, type MachineTemplate } from '../api/client';
 import { useMachineMutations } from '../api/hooks';
+import { gib } from '../lib/format';
 import { Modal } from './Modal';
-
-// gib renders a MiB value as a compact GiB hint (e.g. 2048 → "2 GiB").
-function gib(mib: number): string {
-  const g = mib / 1024;
-  return `${Number.isInteger(g) ? g : g.toFixed(1)} GiB`;
-}
 
 // CreateMachineDialog is the new-machine flow: pick a template, optionally name
 // it, and (under Advanced) override the template's default resources within the
