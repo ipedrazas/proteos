@@ -1078,6 +1078,95 @@
   justify-content: flex-start;
 }
 
+/* --- Secrets --------------------------------------------------------------- */
+
+.c-app .c-secret-list {
+  margin: calc(var(--c-unit) * 2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.c-app .c-secret-row {
+  padding: calc(var(--c-unit) * 1.5) 0;
+  border-top: 1px solid var(--border);
+}
+
+.c-app .c-secret-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--c-unit) * 1.5);
+  flex-wrap: wrap;
+}
+
+.c-app .c-secret-head-standalone {
+  margin-top: calc(var(--c-unit) * 2);
+}
+
+.c-app .c-secret-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.c-app .c-secret-form {
+  margin-top: calc(var(--c-unit) * 2);
+  max-width: 560px;
+}
+
+.c-app .c-input-wide {
+  width: 100%;
+}
+
+.c-app .c-input-narrow {
+  min-width: 0;
+  width: 120px;
+}
+
+/* Secrets are entered, never read back, so the fields are type=password even
+   for values a user might want to eyeball. The tradeoff is deliberate: these
+   forms are most often filled by paste, and a shoulder-surfable API key on
+   screen is a worse failure than a paste you cannot visually verify. */
+
+.c-app .c-token-form {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--c-unit);
+  margin-top: calc(var(--c-unit) * 2);
+  padding-top: calc(var(--c-unit) * 2);
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.c-app .c-field-inline {
+  margin-bottom: 0;
+}
+
+/* The one-time token reveal. Deliberately loud — it is the only secret the
+   console ever displays, and there is no second chance to read it. */
+.c-app .c-token-reveal {
+  margin: calc(var(--c-unit) * 2) 0;
+  padding: calc(var(--c-unit) * 2);
+  background: rgba(63, 185, 80, 0.08);
+  border: 1px solid rgba(63, 185, 80, 0.5);
+  border-radius: var(--c-radius);
+}
+
+.c-app .c-token-reveal-title {
+  margin: 0 0 var(--c-unit);
+  font-size: 13px;
+}
+
+.c-app .c-expiry {
+  font-size: 12px;
+}
+
+.c-app .c-expiry-warn {
+  color: var(--c-pending);
+}
+
+.c-app .c-identity-defs {
+  margin-top: calc(var(--c-unit) * 2);
+}
+
 /* --- Responsive ------------------------------------------------------------ */
 
 /* Below 1024px the side nav becomes a horizontal strip rather than eating a

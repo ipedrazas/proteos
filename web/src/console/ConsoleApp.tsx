@@ -5,6 +5,7 @@ import { KeysPage } from './keys/KeysPage';
 import { LaunchWizard } from './machines/LaunchWizard';
 import { MachineDetail } from './machines/MachineDetail';
 import { MachinesList } from './machines/MachinesList';
+import { SecretsPage } from './secrets/SecretsPage';
 import { SideNav } from './nav';
 import { MACHINES, machineOverviewPath } from './paths';
 import { Placeholder } from './Placeholder';
@@ -72,15 +73,7 @@ export function ConsoleApp({ me }: { me: Me }) {
               }
             />
             <Route path="keys" element={<KeysPage me={me} />} />
-            <Route
-              path="secrets"
-              element={
-                <Placeholder
-                  title="Secrets"
-                  summary="Write-only credentials: AI provider API keys, personal access tokens for the CLI, git host tokens, and your Claude subscription."
-                />
-              }
-            />
+            <Route path="secrets" element={<SecretsPage />} />
             <Route
               path="activity"
               element={
