@@ -214,7 +214,14 @@ state machine from `DestroyMachineDialog.tsx`; do not re-derive it.
   presented as the kill-switch it is: turning it off drops `authorized_keys` from every
   machine *and* refuses the tunnel. Keep the existing confirm copy.
 - **Registered public keys** table: label, fingerprint, added date, revoke.
-  Add-key form validates shape client-side before `POST /api/ssh-keys`.
+  Add-key form validates shape client-side before `POST /api/ssh-keys`, and the label
+  defaults to the key's own comment (`ssh-keygen` writes `user@host`).
+
+  The validation's real job is catching a pasted **private** key. The server rejects one
+  too, but only after the secret has crossed the network, passed a TLS terminator and a
+  reverse proxy, and possibly landed in an access log. The browser is the only place it is
+  still private, so that check runs first and is phrased as an instruction, not a
+  validation message.
 - **Managed git key** (`GET/POST/DELETE /api/profile/ssh`) — a separate section, clearly
   labelled as the *outbound* key the guest pushes to git hosts with. These two key concepts
   are already confusable; the console must separate them visually and say which is which.
