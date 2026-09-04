@@ -3,7 +3,10 @@
 > Source: request to "delegate the execution of a remote agent to a Kubernetes
 > cluster" (2026-09-04). Feature work off the master-plan numbering, like
 > `port-preview` and `multi-machine`; stages labelled **K0–K6**.
-> Status: **feasibility analysis + draft plan. Nothing implemented yet.**
+> Status: **K0–K2 implemented** (branch `feat/kubernetes-backend`, 2026-09-04) —
+> the tracer bullet of the "Suggested first PR" below, minus the kind e2e job.
+> K3–K6 not started. See "Implementation notes" at the end for where the build
+> departed from this plan and why.
 
 ## TL;DR
 
@@ -422,3 +425,72 @@ domain resolution reuse), `guest.go` (`DialGuest`), `capacity.go`.
    and destroys it (K2 minimal).
 4. Temporary: templates file for the kind job uses `rootfs_ref` = image ref and
    `kernel_ref: "none"`, until K3 lands `image_ref`.
+
+---
+
+## Implementation notes (K0–K2, 2026-09-04)
+
+What landed, and where it differs from the plan above.
+
+### Done
+
+- **K0** — `image/guest.Dockerfile` (multi-stage, `ARG TEMPLATE` ∈
+  base/go/node/python/full), `image/verify-guest-image.sh`, and the guest-agent
+  workspace-root fix (`persist.Workspace()` + `server.WithWorkspaceRoot`, also
+  applied to code-server's open folder, which the plan did not mention).
+- **K1** — `nodeagent/internal/driver/kubernetes` with the full Driver +
+  GuestDialer surface, config plumbing, `buildDriver` wiring and a startup
+  preflight. Fake-clientset unit tests, NetworkPolicy tests, and the shared
+  `driver/conformance` suite run against both dev and kubernetes.
+- **K2** — `deploy/node-agent/node-agent.Dockerfile`, `deploy/kubernetes/`
+  (kustomize), the CI `guest-image` job, and the publish matrix entries.
+  Documentation landed early: SECURITY.md's isolation-model section and the
+  architecture backend table, because K1/K2 code and manifests reference them.
+
+### Departures from the plan
+
+1. **Shared image fragments are the FETCH layer, not the install steps**
+   (`image/lib/fetch.sh`). `build-rootfs.sh`'s install functions are inseparable
+   from their loop-mount context — the extract-only `dpkg-deb` dance exists
+   because reinstalling the base closure inside a Firecracker rootfs breaks
+   snapshot resume, which is meaningless for a container layer. What must not
+   drift is *which* artifact and *how it is verified*, so that is what both
+   builds now share (`fetch_claude/node/codeserver/gh/go`).
+2. **`image_ref` landed in K1, not K3.** The driver needs it to boot anything;
+   it is additive and `omitempty`, so a control plane that predates it still
+   produces valid requests. The control-plane half of K3 (the column, the
+   template validation, the scheduler filter) is still outstanding.
+3. **`driver.ErrBadSpec` is new.** Without it, a template a kubernetes host can
+   never boot returned 500 and the poller retried forever. It maps to 400.
+4. **The plan's "node-agent has no go.sum" is out of date** — prometheus was
+   already a dependency. The real trap was that `nodeagent/go.sum` was
+   incomplete for a NON-workspace build, which is how both the container image
+   and the Ansible role build the module. It is now tidied standalone under the
+   builder toolchain.
+5. **RestartPolicy is `Always`, not `Never`.** The kubelet supervises the
+   guest-agent the way systemd does in the ext4 image, so a crash restarts the
+   container and keeps the pod IP. The cost is that a crash-looping machine
+   stays in phase Running, so `phaseToState` checks for CrashLoopBackOff
+   explicitly — otherwise a broken machine would report `creating` forever.
+6. **Ingress fails closed with no agent pod labels.** The plan did not say what
+   happens when `PROTEOS_K8S_AGENT_POD_LABELS` is unset. Writing a rule with an
+   empty pod selector would match every pod in the namespace, so the driver
+   writes NO ingress rule instead: an unreachable machine is a visible failure,
+   an over-permissive policy is not.
+7. **The verify script uses a named volume, not a bind mount.** The guest keeps
+   a SQLite `machine.db` on the persist root, and Docker Desktop bind mounts do
+   not support the POSIX locks SQLite needs — persistence silently degraded to
+   ephemeral. Worth knowing before debugging it again.
+
+### Still open before this is usable end to end
+
+- **K2's kind e2e job.** The manifests and images are built and unit-tested, but
+  nothing has yet created a machine in a real cluster. This is the single
+  biggest remaining risk: NetworkPolicy enforcement, the RuntimeClass, PVC
+  binding and pod-IP dialing are all untested against a real API server.
+- **K3 in full** — `hosts.driver`, `templates.image_ref`, the scheduler filter,
+  poweroff-for-kubernetes in `Service.Stop`, and the `backend` field in the API
+  and SPA. Until then the control plane cannot place a machine on a cluster host
+  or explain why hibernate behaves differently.
+- **K4** — the sshd sidecar, and the preview/code-server paths verified against
+  a real cluster.
