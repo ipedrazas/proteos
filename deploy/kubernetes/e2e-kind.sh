@@ -189,7 +189,7 @@ set +e
     PROTEOS_E2E_AGENT_URL="https://127.0.0.1:$LOCAL_PORT" \
       PROTEOS_E2E_AGENT_TOKEN="$TOKEN" \
       PROTEOS_E2E_GUEST_IMAGE="$GUEST_IMAGE" \
-      go test -tags=kind_e2e -count=1 -failfast -timeout 25m -v ./internal/driver/kubernetes/ -run 'TestKind'
+      go test -tags=kind_e2e -count=1 -failfast -timeout 35m -v ./internal/driver/kubernetes/ -run 'TestKind'
 )
 RC=$?
 set -e

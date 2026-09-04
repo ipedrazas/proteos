@@ -1,0 +1,41 @@
+# k3s-specific agent settings. The three values here are the ones that are wrong
+# by default on k3s specifically; everything else comes from base/.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proteos-cluster-agent
+spec:
+  template:
+    spec:
+      # ProteOS's GHCR packages are private, so the cluster-agent needs a pull
+      # secret — and so does every machine pod, in ITS namespace
+      # (PROTEOS_K8S_IMAGE_PULL_SECRET below). Both are named `ghcr` and created
+      # by the README's quickstart. A reference to a secret that does not exist
+      # is not fatal: the kubelet warns and falls back to an anonymous pull, so
+      # this stays harmless on a cluster serving public images.
+      imagePullSecrets:
+        - name: ghcr
+      containers:
+        - name: node-agent
+          env:
+            # k3s's built-in provisioner. It is node-local (a machine's pod is
+            # pinned to the node holding its volume, which is fine on a single
+            # node and a real constraint on several) and it is NOT ENCRYPTED:
+            # this backend has no per-machine LUKS key, so encryption at rest is
+            # the StorageClass's job. On k3s that means encrypting the disk under
+            # the node — see SECURITY.md and the README.
+            - name: PROTEOS_K8S_STORAGE_CLASS
+              value: local-path
+            # k3s's defaults. Both are RFC1918 and so already denied by the
+            # blanket private-range egress rule, but naming them keeps the policy
+            # correct if the cluster is ever re-installed on other ranges.
+            - name: PROTEOS_K8S_CLUSTER_CIDRS
+              value: 10.42.0.0/16,10.43.0.0/16
+            # k3s runs CoreDNS in kube-system, like every other distribution.
+            - name: PROTEOS_K8S_DNS_NAMESPACE
+              value: kube-system
+            # Attached to every machine pod, in the machines namespace. The
+            # secret has to exist there too: a pull secret is namespaced, and a
+            # machine pod does not live where the agent does.
+            - name: PROTEOS_K8S_IMAGE_PULL_SECRET
+              value: ghcr

@@ -1,0 +1,23 @@
+# The control plane runs outside the cluster, so the agent's ClusterIP Service
+# is not reachable from it. k3s ships klipper-lb, which implements
+# type: LoadBalancer by binding the port on every node's own address — no cloud
+# provider, no ingress controller, no extra components.
+#
+# Deliberately NOT an Ingress: the agent terminates TLS itself and the control
+# plane pins its certificate (PROTEOS_NODE_CA_FILE, TAV-27), because the channel
+# carries the bearer token and per-machine volume keys. An HTTP ingress would
+# re-terminate that TLS and break the pin; anything placed in front of this
+# Service must pass TCP through untouched.
+#
+# The agent must therefore hold a certificate whose SAN matches the address the
+# control plane dials — the node IP, or the DNS name pointing at it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: proteos-cluster-agent
+  namespace: proteos-system
+spec:
+  type: LoadBalancer
+  # Local: preserve the control plane's source address and avoid a second hop
+  # between nodes. The agent is one pod; there is nothing to load-balance.
+  externalTrafficPolicy: Local
