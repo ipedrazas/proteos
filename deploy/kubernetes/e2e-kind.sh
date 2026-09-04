@@ -103,6 +103,13 @@ else
 fi
 kubectl config use-context "kind-$CLUSTER" >/dev/null
 
+# Machine pods are Guaranteed-QoS on memory and request a share of a core per
+# vcpu, so what the node can actually offer decides whether one can be scheduled
+# at all. Print it: "Insufficient cpu" is otherwise a puzzle rather than a fact.
+log "node capacity ($(nproc 2>/dev/null || echo '?') host cores):"
+kubectl get nodes -o custom-columns='NAME:.metadata.name,CPU:.status.allocatable.cpu,MEM:.status.allocatable.memory' \
+  2>&1 | sed 's/^/    /' || true
+
 # --- 2. images --------------------------------------------------------------
 # Built here and side-loaded into the node, never pulled: the overlay sets
 # imagePullPolicy accordingly.

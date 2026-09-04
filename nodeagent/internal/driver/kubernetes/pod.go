@@ -159,7 +159,7 @@ func (d *Driver) buildPod(spec driver.VMSpec, image string) *corev1.Pod {
 					{Name: persistVolume, MountPath: persistMountPath},
 					{Name: runVolume, MountPath: runMountPath},
 				},
-				Resources: resourceRequirements(spec),
+				Resources: d.resourceRequirements(spec),
 				// Readiness gates DialGuest: the driver refuses to tunnel to a
 				// pod whose guest-agent is not answering /healthz yet, which is
 				// what keeps a "running" machine actually attachable.
@@ -229,26 +229,51 @@ func listenSpec(port uint32) string {
 }
 
 // resourceRequirements maps the machine's vcpu/memory shape onto pod resources.
-// Requests and limits are equal so a machine gets the Guaranteed QoS class: the
-// firecracker backend hands a VM a fixed slice of the host, and a machine that
-// is silently throttled or evicted under node pressure would be a worse
-// experience than one the scheduler simply cannot place.
-func resourceRequirements(spec driver.VMSpec) corev1.ResourceRequirements {
-	list := corev1.ResourceList{}
+//
+// MEMORY is always request == limit. Memory is incompressible: a machine that
+// is overcommitted on memory is not slow, it is OOM-killed, and losing someone's
+// agent session to a noisy neighbour is not a trade worth making.
+//
+// CPU is compressible, so its request is scaled by CPURequestRatio (default
+// 1.0 — request == limit, the Guaranteed-QoS behaviour a Firecracker VM's fixed
+// slice of a host most resembles). Lowering it lets a machine be SCHEDULED with
+// less than a dedicated core while still being ALLOWED a full one when the node
+// is idle. Without that knob a 2-vcpu machine demands two whole free cores, so
+// the backend cannot place a single machine on a small cluster — a dev cluster,
+// a single-node k3s, or a CI kind node — at all.
+func (d *Driver) resourceRequirements(spec driver.VMSpec) corev1.ResourceRequirements {
+	requests, limits := corev1.ResourceList{}, corev1.ResourceList{}
+
 	if spec.Vcpus > 0 {
-		list[corev1.ResourceCPU] = *resource.NewQuantity(int64(spec.Vcpus), resource.DecimalSI)
+		limits[corev1.ResourceCPU] = *resource.NewQuantity(int64(spec.Vcpus), resource.DecimalSI)
+		milli := int64(float64(spec.Vcpus) * 1000 * d.cpuRequestRatio())
+		if milli < 1 {
+			milli = 1 // never request zero: that is a different QoS class entirely
+		}
+		requests[corev1.ResourceCPU] = *resource.NewMilliQuantity(milli, resource.DecimalSI)
 	}
 	if spec.MemMiB > 0 {
-		list[corev1.ResourceMemory] = *resource.NewQuantity(int64(spec.MemMiB)*1024*1024, resource.BinarySI)
+		mem := *resource.NewQuantity(int64(spec.MemMiB)*1024*1024, resource.BinarySI)
+		requests[corev1.ResourceMemory] = mem
+		limits[corev1.ResourceMemory] = mem
 	}
-	if len(list) == 0 {
+
+	if len(requests) == 0 {
 		return corev1.ResourceRequirements{}
 	}
-	limits := corev1.ResourceList{}
-	for k, v := range list {
-		limits[k] = v
+	return corev1.ResourceRequirements{Requests: requests, Limits: limits}
+}
+
+// cpuRequestRatio is the configured ratio, clamped to (0,1]. A value outside
+// that range is meaningless — above 1 would request more than the limit, which
+// the API server rejects — so it falls back to the safe default rather than
+// producing a pod that cannot be created.
+func (d *Driver) cpuRequestRatio() float64 {
+	r := d.cfg.CPURequestRatio
+	if r <= 0 || r > 1 {
+		return 1
 	}
-	return corev1.ResourceRequirements{Requests: list, Limits: limits}
+	return r
 }
 
 // healthzProbeCommand curls the guest-agent's own /healthz over loopback inside

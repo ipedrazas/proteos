@@ -160,6 +160,7 @@ func buildDriver(cfg *config.Config) (driver.Driver, error) {
 			ClusterCIDRs:    cfg.K8sClusterCIDRs,
 			DNSNamespace:    cfg.K8sDNSNamespace,
 			DefaultImage:    cfg.K8sDefaultImage,
+			CPURequestRatio: cfg.K8sCPURequestRatio,
 		}), nil
 	default:
 		return nil, errors.New("unknown PROTEOS_AGENT_DRIVER: " + cfg.Driver)

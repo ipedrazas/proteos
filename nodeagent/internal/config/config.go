@@ -180,6 +180,14 @@ type Config struct {
 	// machine egress always permits port 53 to it. Default kube-system.
 	K8sDNSNamespace string
 
+	// K8sCPURequestRatio (PROTEOS_K8S_CPU_REQUEST_RATIO, 0<r<=1, default 1.0)
+	// scales a machine's CPU request relative to its limit. At the default a
+	// machine needs a whole free core per vcpu to be scheduled — the closest
+	// analogue to a Firecracker VM's fixed slice of a host, but more than a
+	// small cluster can provide. Lowering it oversubscribes CPU (which is
+	// compressible) while memory stays request == limit.
+	K8sCPURequestRatio float64
+
 	// K8sDefaultImage (PROTEOS_K8S_DEFAULT_IMAGE) is the guest image used when
 	// an EnsureRequest carries no image_ref. It exists for the tracer bullet,
 	// before K3 teaches the control plane to send one.
@@ -233,6 +241,11 @@ func Load() (*Config, error) {
 		K8sClusterCIDRs:    splitCSV(os.Getenv("PROTEOS_K8S_CLUSTER_CIDRS")),
 		K8sDNSNamespace:    getenv("PROTEOS_K8S_DNS_NAMESPACE", "kube-system"),
 		K8sDefaultImage:    os.Getenv("PROTEOS_K8S_DEFAULT_IMAGE"),
+		K8sCPURequestRatio: getenvFloat("PROTEOS_K8S_CPU_REQUEST_RATIO", 1.0),
+	}
+
+	if c.K8sCPURequestRatio <= 0 || c.K8sCPURequestRatio > 1 {
+		return nil, fmt.Errorf("PROTEOS_K8S_CPU_REQUEST_RATIO must be in (0,1], got %v", c.K8sCPURequestRatio)
 	}
 
 	nodeSelector, err := getenvJSONMap("PROTEOS_K8S_NODE_SELECTOR")
@@ -354,6 +367,15 @@ func getenvInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+func getenvFloat(key string, def float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
 		}
 	}
 	return def

@@ -19,6 +19,15 @@ spec:
           env:
             - name: PROTEOS_K8S_RUNTIME_CLASS
               value: ""
+            # A kind node is one container on a 2-4 core CI runner, and the
+            # control plane has already reserved about a core of it. At the
+            # default ratio a 1-vcpu machine demands a whole free core and the
+            # scheduler simply refuses it ("Insufficient cpu"), which is how the
+            # first real run of this e2e failed. Machines here are scheduled on a
+            # tenth of a core and still allowed their full limit when the node is
+            # idle. Production leaves this at the default.
+            - name: PROTEOS_K8S_CPU_REQUEST_RATIO
+              value: "0.1"
             # The guest image is `kind load`ed too. Machine pods use
             # imagePullPolicy: IfNotPresent, so a loaded image is never pulled;
             # this just lets the e2e name one image for every machine without

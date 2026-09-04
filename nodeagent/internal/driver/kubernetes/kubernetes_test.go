@@ -108,8 +108,11 @@ func TestEnsureBuildsTheExpectedPod(t *testing.T) {
 	if c.Image != testImage {
 		t.Errorf("image = %q, want %q", c.Image, testImage)
 	}
-	if got := c.Resources.Requests.Cpu().Value(); got != 2 {
-		t.Errorf("cpu request = %v, want 2", got)
+	if got := c.Resources.Requests.Cpu().MilliValue(); got != 2000 {
+		t.Errorf("cpu request = %vm, want 2000m (ratio defaults to 1.0)", got)
+	}
+	if got := c.Resources.Limits.Cpu().Value(); got != 2 {
+		t.Errorf("cpu limit = %v, want 2", got)
 	}
 	if got := c.Resources.Limits.Memory().Value(); got != 2048*1024*1024 {
 		t.Errorf("memory limit = %v, want 2 GiB", got)
@@ -184,6 +187,56 @@ func TestReadinessProbeDoesNotCrossTheNetwork(t *testing.T) {
 	joined := strings.Join(probe.Exec.Command, " ")
 	if !strings.Contains(joined, "127.0.0.1:1024/healthz") {
 		t.Errorf("exec probe does not check the guest-agent's own /healthz over loopback: %q", joined)
+	}
+}
+
+// CPU is compressible and memory is not, so the request ratio must scale only
+// the former. A machine that is overcommitted on memory is not slow, it is
+// OOM-killed — which would lose someone's agent session to a noisy neighbour.
+func TestCPURequestRatioScalesCPUButNeverMemory(t *testing.T) {
+	cluster := fakecluster.New(fakecluster.Options{Namespace: testNamespace})
+	d := k8s.New(cluster, k8s.Config{Namespace: testNamespace, CPURequestRatio: 0.25})
+	ctx := context.Background()
+	const id = "aaaaaaaa-0000-4000-8000-00000000000b"
+
+	if _, err := d.EnsureRunning(ctx, spec(id)); err != nil { // spec is 2 vcpu / 2048 MiB
+		t.Fatalf("EnsureRunning: %v", err)
+	}
+	pod, err := cluster.CoreV1().Pods(testNamespace).Get(ctx, "m-"+id, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+	res := pod.Spec.Containers[0].Resources
+
+	if got := res.Requests.Cpu().MilliValue(); got != 500 {
+		t.Errorf("cpu request = %vm, want 500m (2 vcpu × 0.25)", got)
+	}
+	if got := res.Limits.Cpu().Value(); got != 2 {
+		t.Errorf("cpu limit = %v, want the full 2 vcpu — the ratio scales the request only", got)
+	}
+	if req, lim := res.Requests.Memory().Value(), res.Limits.Memory().Value(); req != lim {
+		t.Errorf("memory request %v != limit %v: memory must never be overcommitted", req, lim)
+	}
+}
+
+// An out-of-range ratio must fall back to the safe default rather than produce a
+// pod the API server rejects (a request above its limit) or one with no request.
+func TestCPURequestRatioOutOfRangeFallsBackToOne(t *testing.T) {
+	for _, ratio := range []float64{0, -1, 2} {
+		cluster := fakecluster.New(fakecluster.Options{Namespace: testNamespace})
+		d := k8s.New(cluster, k8s.Config{Namespace: testNamespace, CPURequestRatio: ratio})
+		const id = "aaaaaaaa-0000-4000-8000-00000000000c"
+
+		if _, err := d.EnsureRunning(context.Background(), spec(id)); err != nil {
+			t.Fatalf("ratio %v: EnsureRunning: %v", ratio, err)
+		}
+		pod, err := cluster.CoreV1().Pods(testNamespace).Get(context.Background(), "m-"+id, metav1.GetOptions{})
+		if err != nil {
+			t.Fatalf("ratio %v: get pod: %v", ratio, err)
+		}
+		if got := pod.Spec.Containers[0].Resources.Requests.Cpu().MilliValue(); got != 2000 {
+			t.Errorf("ratio %v: cpu request = %vm, want the 2000m default", ratio, got)
+		}
 	}
 }
 

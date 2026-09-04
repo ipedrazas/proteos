@@ -139,6 +139,16 @@ type Config struct {
 	// for the tracer bullet, before K3 teaches the control plane to send one.
 	DefaultImage string
 
+	// CPURequestRatio scales a machine's CPU *request* relative to its limit
+	// (default 1.0 — request == limit). CPU is compressible, so lowering this
+	// lets a machine be scheduled with less than a dedicated core per vcpu while
+	// still being allowed a full one when the node is idle. Memory is never
+	// scaled: an overcommitted machine is OOM-killed, not slowed.
+	//
+	// At 1.0 a 2-vcpu machine needs two whole free cores, which no small cluster
+	// (a dev cluster, a single-node k3s, a CI kind node) can provide.
+	CPURequestRatio float64
+
 	// DialTimeout bounds DialGuest's TCP connect to the pod IP.
 	DialTimeout time.Duration
 

@@ -93,6 +93,15 @@ spec:
             - name: PROTEOS_K8S_NODE_SELECTOR
               value: ""
 
+            # CPU request as a fraction of the limit (0<r<=1, default 1.0).
+            # At the default a machine needs a whole free core per vcpu to be
+            # scheduled — closest to a Firecracker VM's fixed slice of a host,
+            # but more than a small cluster can give. Lower it to oversubscribe
+            # CPU, which is compressible; memory is always request == limit,
+            # because an overcommitted machine is OOM-killed rather than slowed.
+            - name: PROTEOS_K8S_CPU_REQUEST_RATIO
+              value: "1.0"
+
             # Tracer bullet only: the image to use when a template carries no
             # image_ref. K3 makes the control plane send one.
             - name: PROTEOS_K8S_DEFAULT_IMAGE
