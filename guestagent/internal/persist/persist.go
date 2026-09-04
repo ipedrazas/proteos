@@ -102,7 +102,12 @@ func Setup(cfg Config) (*Persist, error) {
 		p.home = filepath.Join(cfg.Dir, "home")
 		p.work = filepath.Join(cfg.Dir, "workspace")
 		p.user = cfg.RunAsUser
-		if err := ensureDirs(p.home, p.work); err != nil {
+		// Same preparation disk mode does. Dir mode used only to create the
+		// directories, which left them owned by root: fine while dir mode was a
+		// dev-only override run entirely as one user, wrong the moment it became
+		// the Kubernetes backend's only mode, where the agent is root and
+		// sessions are an unprivileged user.
+		if err := prepareUserDirs(p.home, p.work, cfg.RunAsUID, cfg.RunAsGID); err != nil {
 			slog.Error("persist: dir mode setup failed; degrading to ephemeral", "err", err)
 			return degraded(cfg.Version), nil
 		}
@@ -156,6 +161,14 @@ func (p *Persist) Mode() string { return p.mode }
 // where the persist root puts it). Empty in degraded mode, in which case
 // callers fall back to guestwire.WorkspaceRoot.
 func (p *Persist) Workspace() string { return p.work }
+
+// Home reports the resolved $HOME: the bind target in disk mode, <dir>/home in
+// dir mode. Empty in degraded mode. Sessions must START here as well as have
+// HOME set to it — in disk mode the two coincide because the persisted home is
+// bind-mounted over the user's, but in dir mode nothing is bind-mounted, so a
+// session starting in the image's /home/<user> would write to a directory that
+// disappears with the container.
+func (p *Persist) Home() string { return p.home }
 
 // ShellEnv returns the environment entries that put the shell's $HOME (and a
 // WORKSPACE pointer) on the persistent disk. Empty in degraded mode.

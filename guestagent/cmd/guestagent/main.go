@@ -102,9 +102,19 @@ func run() error {
 
 	// Sessions drop to the unprivileged user and start in its $HOME (which it can
 	// write); the credential is nil for the root identity.
+	//
+	// The persisted home wins over the OS user's when there is one, so a
+	// session's cwd and its $HOME are the same directory. Disk mode gets that for
+	// free by bind-mounting the persisted home over the user's; dir mode does not
+	// bind anything, so without this a session would start in the image's
+	// /home/<user> — which is ephemeral — while $HOME pointed at the volume.
+	homeDir := id.Home
+	if h := p.Home(); h != "" {
+		homeDir = h
+	}
 	sessDir := ""
 	if !id.IsRoot {
-		sessDir = id.Home
+		sessDir = homeDir
 	}
 	mgr := term.NewManager(term.Config{
 		Shell:         cfg.Shell,
@@ -168,14 +178,14 @@ func run() error {
 		}
 		defer webLn.Close()
 
-		args := webfwd.DefaultCodeServerArgs(cfg.WebBackend, id.Home, workspaceRoot)
+		args := webfwd.DefaultCodeServerArgs(cfg.WebBackend, homeDir, workspaceRoot)
 		if cfg.CodeServerArgs != "" {
 			args = strings.Fields(cfg.CodeServerArgs)
 		}
 		// Seed default User/settings.json on the persist disk before the first
 		// lazy start. Non-fatal: a missing settings file only costs the defaults.
 		if cfg.CodeServerBin != "" {
-			if err := webfwd.SeedUserSettings(id.Home, id.UID, id.GID); err != nil {
+			if err := webfwd.SeedUserSettings(homeDir, id.UID, id.GID); err != nil {
 				slog.Warn("webfwd: seed code-server settings", "err", err)
 			}
 		}
