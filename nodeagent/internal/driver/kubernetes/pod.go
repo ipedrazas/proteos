@@ -246,6 +246,25 @@ func sshdContainerSpec(image string) corev1.Container {
 			{Name: persistVolume, MountPath: persistMountPath},
 		},
 		Resources: sshdResources(),
+		// A machine is reported running once its POD is ready, and a pod is
+		// ready only when every container is. Without this probe the sshd
+		// container counts as ready the moment it starts — before it has
+		// finished generating a machine's first host keys — so a user told
+		// their machine is running could open a terminal but have an ssh
+		// connection closed under them. The probe closes that window by making
+		// "running" mean every advertised surface is actually up.
+		//
+		// bash, not sh: /dev/tcp is a bash feature and the image's /bin/sh is
+		// dash, where this would fail whatever sshd was doing.
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				Exec: &corev1.ExecAction{Command: sshdProbeCommand()},
+			},
+			InitialDelaySeconds: 1,
+			PeriodSeconds:       3,
+			TimeoutSeconds:      3,
+			FailureThreshold:    30,
+		},
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: ptr(false),
 			Privileged:               ptr(false),
@@ -263,6 +282,12 @@ func sshdContainerSpec(image string) corev1.Container {
 			SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
 	}
+}
+
+// sshdProbeCommand opens a loopback connection to sshd and closes it, which is
+// the only question readiness has to answer: is the daemon accepting yet.
+func sshdProbeCommand() []string {
+	return []string{"bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/22"}
 }
 
 // sshdResources is the sidecar's fixed, small footprint — see sshdCPUMilli.

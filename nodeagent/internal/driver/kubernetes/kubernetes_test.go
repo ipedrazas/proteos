@@ -220,6 +220,15 @@ func TestPodRunsSSHDAsASidecar(t *testing.T) {
 		t.Error("sshd container is privileged")
 	}
 
+	// A machine is "running" when its pod is ready, and a pod is ready only when
+	// every container is. Without a probe here the sshd container is ready the
+	// moment it starts — before it has generated the machine's first host keys —
+	// and a user told their machine is running would have an ssh connection
+	// closed under them. The kind e2e failed exactly this way before the probe.
+	if sshd.ReadinessProbe == nil || sshd.ReadinessProbe.Exec == nil {
+		t.Error("sshd has no readiness probe, so a machine reports running before ssh accepts")
+	}
+
 	// Port 22 is deliberately NOT declared on the pod: sshd binds the pod's
 	// loopback, and the only route in is the guest agent's forward on 1027.
 	for _, c := range pod.Spec.Containers {
