@@ -179,6 +179,19 @@ func guestReady(pod *corev1.Pod) bool {
 	return false
 }
 
+// sshdReady reports whether the sshd sidecar is accepting connections (K4). It
+// is deliberately NOT part of whether a machine is running: sshd is one surface
+// of a machine, and a machine whose terminal works is usable. Only the ssh dial
+// path asks this question.
+func sshdReady(pod *corev1.Pod) bool {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name == sshdContainer {
+			return cs.Ready
+		}
+	}
+	return false
+}
+
 // crashLoop reports whether the guest container is stuck restarting, and why.
 func crashLoop(pod *corev1.Pod) (string, bool) {
 	for _, cs := range pod.Status.ContainerStatuses {

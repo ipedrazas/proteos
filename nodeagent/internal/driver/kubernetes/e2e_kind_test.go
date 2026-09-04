@@ -180,13 +180,24 @@ func (a *agent) cleanup(t *testing.T, id string) {
 // connection the cluster-agent made to the pod IP.
 func (a *agent) dialGuest(t *testing.T, id string, port uint32) net.Conn {
 	t.Helper()
+	conn, err := a.tryDialGuest(id, port)
+	if err != nil {
+		t.Fatalf("dial guest: %v", err)
+	}
+	return conn
+}
+
+// tryDialGuest is dialGuest for callers that expect a refusal and want to retry
+// rather than fail — the ssh port is not servable until the sshd sidecar is
+// ready, which is a state a machine legitimately passes through.
+func (a *agent) tryDialGuest(id string, port uint32) (net.Conn, error) {
 	u, err := url.Parse(a.url)
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	conn, err := tls.Dial("tcp", u.Host, &tls.Config{InsecureSkipVerify: true})
 	if err != nil {
-		t.Fatalf("dial agent: %v", err)
+		return nil, fmt.Errorf("dial agent: %w", err)
 	}
 	path := fmt.Sprintf("/v1/machines/%s/guest?%s=%d", id, api.GuestPortParam, port)
 	req := "GET " + path + " HTTP/1.1\r\n" +
@@ -196,25 +207,26 @@ func (a *agent) dialGuest(t *testing.T, id string, port uint32) net.Conn {
 		"Upgrade: " + api.UpgradeGuestProto + "\r\n\r\n"
 	if _, err := conn.Write([]byte(req)); err != nil {
 		conn.Close()
-		t.Fatalf("write upgrade: %v", err)
+		return nil, fmt.Errorf("write upgrade: %w", err)
 	}
 	br := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(br, nil)
 	if err != nil {
 		conn.Close()
-		t.Fatalf("read upgrade response: %v", err)
+		return nil, fmt.Errorf("read upgrade response: %w", err)
 	}
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		b, _ := io.ReadAll(resp.Body)
 		conn.Close()
-		t.Fatalf("guest tunnel: want 101, got %d: %s", resp.StatusCode, b)
+		return nil, fmt.Errorf("guest tunnel: want 101, got %d: %s", resp.StatusCode, b)
 	}
 	if br.Buffered() > 0 {
 		// The agent writes nothing after the 101 before piping, so anything
 		// buffered would mean the framing assumption is wrong.
-		t.Fatalf("unexpected %d bytes buffered after the 101", br.Buffered())
+		conn.Close()
+		return nil, fmt.Errorf("unexpected %d bytes buffered after the 101", br.Buffered())
 	}
-	return conn
+	return conn, nil
 }
 
 // terminal opens a PTY session over the tunnel and returns it plus the tunnel to
@@ -423,16 +435,17 @@ func TestKindSSH(t *testing.T) {
 
 	// 1. sshd answers through the tunnel. The forward is the only route in:
 	// sshd binds the pod's loopback, which nothing outside the pod can address.
-	conn := a.dialGuest(t, id, api.GuestSSHPort)
-	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
-	banner := make([]byte, 64)
-	n, err := conn.Read(banner)
-	conn.Close()
-	if err != nil && n == 0 {
-		t.Fatalf("read ssh banner through the tunnel: %v", err)
-	}
-	if !strings.HasPrefix(string(banner[:n]), "SSH-2.0-") {
-		t.Fatalf("guest port %d is not sshd; got %q", api.GuestSSHPort, string(banner[:n]))
+	//
+	// Retried, because a machine is RUNNING as soon as its guest container is
+	// ready and sshd is ready a little later on a first boot — it generates the
+	// machine's host keys. That ordering is deliberate (a broken sshd must not
+	// cost a user their terminal), so the driver refuses an ssh dial until sshd
+	// is ready rather than handing back a connection that closes. Waiting here
+	// is what a client does; asserting on the first attempt would be asserting
+	// the opposite design.
+	banner := waitForSSHBanner(t, a, id, 90*time.Second)
+	if !strings.HasPrefix(banner, "SSH-2.0-") {
+		t.Fatalf("guest port %d is not sshd; got %q", api.GuestSSHPort, banner)
 	}
 
 	ws, tunnel := a.terminal(t, id, "ssh")
@@ -497,6 +510,35 @@ func TestKindSSH(t *testing.T) {
 	if after := fingerprint(t, out); after != before {
 		t.Errorf("host key changed across a restart (%s -> %s); every reconnect would warn the user", before, after)
 	}
+}
+
+// waitForSSHBanner dials the machine's ssh port until sshd answers, and returns
+// what it said. Both failure modes are retried and distinguished in the final
+// message: the driver refusing the dial (sshd not ready yet) and the dial
+// succeeding but the guest's forward closing it (sshd not listening).
+func waitForSSHBanner(t *testing.T, a *agent, id string, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last string
+	for time.Now().Before(deadline) {
+		conn, err := a.tryDialGuest(id, api.GuestSSHPort)
+		if err != nil {
+			last = "dial refused: " + err.Error()
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
+		buf := make([]byte, 64)
+		n, err := conn.Read(buf)
+		conn.Close()
+		if n > 0 {
+			return string(buf[:n])
+		}
+		last = fmt.Sprintf("read: %v", err)
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("sshd never answered on guest port %d within %s (last: %s)", api.GuestSSHPort, timeout, last)
+	return ""
 }
 
 // fingerprint pulls the FP: line runInGuest's output carries. It fails the test

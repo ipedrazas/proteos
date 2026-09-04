@@ -39,6 +39,15 @@ func (d *Driver) DialGuest(ctx context.Context, machineID string, port uint32) (
 	if !guestReady(pod) {
 		return nil, fmt.Errorf("machine %s: guest agent is not ready", machineID)
 	}
+	// Inbound SSH lives in its own container, which is ready a little later than
+	// the guest agent on a machine's first boot (it generates the host keys). A
+	// machine is deliberately "running" as soon as the GUEST is ready — a broken
+	// sshd must not cost a user their terminal — so this is the only place that
+	// can tell an ssh caller "not yet" rather than handing back a connection the
+	// guest's forward closes the moment it fails to reach sshd.
+	if port == api.GuestSSHPort && !sshdReady(pod) {
+		return nil, fmt.Errorf("machine %s: sshd is not ready yet", machineID)
+	}
 
 	if port == 0 {
 		port = api.GuestTerminalPort

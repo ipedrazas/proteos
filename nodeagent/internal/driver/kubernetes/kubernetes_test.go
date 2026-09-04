@@ -47,6 +47,9 @@ func newDriver(t *testing.T, bootDelay time.Duration) (*k8s.Driver, *fakecluster
 		RuntimeClass:   "gvisor",
 		ClusterCIDRs:   []string{"10.244.0.0/16"},
 		CapacityTTL:    time.Nanosecond, // no caching in tests
+		// A fake cluster's pod IPs route nowhere, so any test that reaches an
+		// actual dial must fail fast rather than sit in the OS connect timeout.
+		DialTimeout: 100 * time.Millisecond,
 	})
 	return d, cluster
 }
@@ -237,6 +240,45 @@ func TestPodRunsSSHDAsASidecar(t *testing.T) {
 				t.Error("port 22 is declared on the pod; sshd is reachable only through the guest tunnel")
 			}
 		}
+	}
+}
+
+// A machine is running as soon as its GUEST is ready, which is deliberate — a
+// broken sshd must not cost a user their terminal — so the ssh dial is the only
+// place that can tell a caller sshd is not up yet. Without this gate the caller
+// gets a connection the guest's forward closes the moment it fails to reach
+// sshd, which reads as a mysterious EOF rather than "not ready".
+func TestSSHDialRefusedUntilSSHDIsReady(t *testing.T) {
+	d, cluster := newDriver(t, 0)
+	ctx := context.Background()
+	const id = "aaaaaaaa-0000-4000-8000-00000000000c"
+
+	if _, err := d.EnsureRunning(ctx, spec(id)); err != nil {
+		t.Fatalf("EnsureRunning: %v", err)
+	}
+	if err := cluster.SSHDNotReady(testNamespace, "m-"+id); err != nil {
+		t.Fatalf("SSHDNotReady: %v", err)
+	}
+
+	// The machine is still running: only ssh is unavailable.
+	st, err := d.Status(ctx, id)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if st.State != api.StateRunning {
+		t.Fatalf("state = %q, want running — a machine whose terminal works is running", st.State)
+	}
+
+	_, err = d.DialGuest(ctx, id, api.GuestSSHPort)
+	if err == nil || !strings.Contains(err.Error(), "sshd") {
+		t.Fatalf("ssh dial error = %v, want one naming sshd", err)
+	}
+
+	// The terminal is unaffected — it gets as far as an actual dial (which a
+	// fake pod IP cannot answer), rather than being refused by the ssh gate.
+	_, err = d.DialGuest(ctx, id, api.GuestTerminalPort)
+	if err != nil && strings.Contains(err.Error(), "sshd") {
+		t.Errorf("the ssh gate refused a terminal dial: %v", err)
 	}
 }
 
