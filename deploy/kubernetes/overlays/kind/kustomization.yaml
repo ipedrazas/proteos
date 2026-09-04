@@ -1,0 +1,22 @@
+# kind overlay — the CI/e2e shape of the cluster-agent deployment.
+#
+# It changes the two things a kind cluster cannot provide, and NOTHING else: the
+# base manifests are applied as they ship, so the e2e exercises the real RBAC,
+# the real NetworkPolicies and the real Secret wiring rather than a simplified
+# copy of them.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+images:
+  - name: ghcr.io/tavon-ai/proteos-node-agent
+    newName: proteos-node-agent
+    newTag: e2e
+
+patches:
+  - path: agent-env.yaml
+    target:
+      kind: Deployment
+      name: proteos-cluster-agent

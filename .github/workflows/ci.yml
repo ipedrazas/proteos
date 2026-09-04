@@ -167,6 +167,40 @@ jobs:
       - name: Verify the guest image
         run: image/verify-guest-image.sh --image proteos-guest:base-ci
 
+  # The Kubernetes backend against a REAL cluster. The kubernetes driver's unit
+  # tests run against client-go's fake clientset, which is a plain object store:
+  # it cannot schedule a pod, bind a PVC, pull an image, run a readiness probe or
+  # route a packet. This job applies the shipping manifests to a kind cluster and
+  # drives a machine through its lifecycle, which is the only way those parts get
+  # exercised at all.
+  #
+  # FUNCTIONAL, not isolation: kind has no gVisor, so the kind overlay disables
+  # the RuntimeClass. This job says nothing about the sandbox a production
+  # deployment relies on (SECURITY.md); it says the driver drives Kubernetes.
+  kubernetes-e2e:
+    name: kubernetes backend (kind)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: nodeagent/go.mod
+          cache-dependency-path: |
+            go.work.sum
+            nodeagent/go.sum
+
+      # install_only: the script creates and tears down its own cluster, so the
+      # action must not create one.
+      - name: Install kind
+        uses: helm/kind-action@v1
+        with:
+          install_only: true
+
+      - name: Run the kind e2e
+        run: deploy/kubernetes/e2e-kind.sh
+
   # Firecracker integration tests run the real jailed VMM and need KVM, so they
   # only run on a self-hosted runner with the [self-hosted, linux, kvm] labels.
   # The runner must have firecracker+jailer installed and the pinned kernel/rootfs
@@ -368,7 +402,7 @@ jobs:
   # Dockerfile's directory.
   publish:
     name: publish ${{ matrix.image }}
-    needs: [controlplane, nodeagent, guestagent, guest-image, web]
+    needs: [controlplane, nodeagent, guestagent, guest-image, kubernetes-e2e, web]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
