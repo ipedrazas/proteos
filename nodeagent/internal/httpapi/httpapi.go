@@ -108,6 +108,7 @@ func (s *Server) handleEnsure(w http.ResponseWriter, r *http.Request) {
 		MemMiB:    req.MemMiB,
 		KernelRef: req.KernelRef,
 		RootfsRef: req.RootfsRef,
+		ImageRef:  req.ImageRef,
 		VolumeKey: volumeKey,
 	}
 	if req.DiskID != "" {
@@ -122,6 +123,12 @@ func (s *Server) handleEnsure(w http.ResponseWriter, r *http.Request) {
 	handle, err := s.drv.EnsureRunning(r.Context(), spec)
 	if err != nil {
 		slog.Error("ensure failed", "machine", id, "err", err)
+		// A spec this backend can never honour is the caller's problem, not a
+		// fault: retrying it forever (which the poller would) cannot help.
+		if errors.Is(err, driver.ErrBadSpec) {
+			writeError(w, http.StatusBadRequest, api.ErrBadRequest)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, api.ErrInternal)
 		return
 	}

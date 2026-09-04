@@ -78,10 +78,12 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: nodeagent/go.mod
-          # The node-agent has no external deps (no go.sum); key the module
-          # cache off the workspace sum so setup-go doesn't error on a missing
-          # nodeagent/go.sum.
-          cache-dependency-path: go.work.sum
+          # Key the module cache off BOTH sum files: the node-agent carries its
+          # own dependencies now (prometheus, and client-go for the kubernetes
+          # driver), and the workspace sum alone would miss a change to them.
+          cache-dependency-path: |
+            go.work.sum
+            nodeagent/go.sum
 
       # The node-agent module builds and tests with no Postgres and no KVM: the
       # dev driver is the default, and the firecracker driver is behind a build
@@ -133,6 +135,37 @@ jobs:
 
       - name: go test -race
         run: go test -race ./...
+
+  # The OCI guest image (the Kubernetes backend's guest). Built and actually RUN
+  # here — verify-guest-image.sh boots it the way a machine pod does and checks
+  # /healthz, dir-mode persistence, a real terminal WebSocket + PTY round-trip,
+  # the port-preview forward, and the baked platform layer. That is the OCI
+  # replacement for the ext4 image's loop-mount verifiers, which cannot run on a
+  # container image. Build only; the publish job pushes.
+  guest-image:
+    name: guest image (OCI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build the base guest image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: image/guest.Dockerfile
+          build-args: |
+            TEMPLATE=base
+            GUESTAGENT_VERSION=ga-${{ github.sha }}
+          load: true
+          tags: proteos-guest:base-ci
+          cache-from: type=gha,scope=proteos-guest-base
+          cache-to: type=gha,mode=max,scope=proteos-guest-base
+
+      - name: Verify the guest image
+        run: image/verify-guest-image.sh --image proteos-guest:base-ci
 
   # Firecracker integration tests run the real jailed VMM and need KVM, so they
   # only run on a self-hosted runner with the [self-hosted, linux, kvm] labels.
@@ -335,7 +368,7 @@ jobs:
   # Dockerfile's directory.
   publish:
     name: publish ${{ matrix.image }}
-    needs: [controlplane, nodeagent, guestagent, web]
+    needs: [controlplane, nodeagent, guestagent, guest-image, web]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -349,6 +382,19 @@ jobs:
             dockerfile: deploy/app-stack/controlplane.Dockerfile
           - image: proteos-ui
             dockerfile: deploy/app-stack/web.Dockerfile
+          # The cluster-agent: a node-agent running the kubernetes driver,
+          # deployed inside the target cluster (deploy/kubernetes/).
+          - image: proteos-node-agent
+            dockerfile: deploy/node-agent/node-agent.Dockerfile
+          # The Kubernetes backend's guest image. The image is per-TEMPLATE, and
+          # only `base` is published automatically so far — so the tags this job
+          # produces (latest, sha-…) all mean the base template. Publishing the
+          # other templates means adding matrix entries with distinct tags.
+          - image: proteos-guest
+            dockerfile: image/guest.Dockerfile
+            build-args: |
+              TEMPLATE=base
+              GUESTAGENT_VERSION=ga-${{ github.sha }}
     steps:
       - uses: actions/checkout@v7
 
@@ -381,6 +427,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
+          build-args: ${{ matrix.build-args }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

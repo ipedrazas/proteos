@@ -1,0 +1,21 @@
+# ClusterIP only. How the control plane (which lives outside the cluster)
+# reaches it is a deployment choice — an Ingress or LoadBalancer in front of
+# this Service, or a Tailscale sidecar, matching the MgmtIfaces practice on
+# Firecracker hosts. Either way the agent terminates TLS itself, so anything in
+# front must pass TCP through rather than re-terminating.
+apiVersion: v1
+kind: Service
+metadata:
+  name: proteos-cluster-agent
+  namespace: proteos-system
+  labels:
+    app.kubernetes.io/name: proteos-cluster-agent
+    app.kubernetes.io/part-of: proteos
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: proteos-cluster-agent
+  ports:
+    - name: api
+      port: 9090
+      targetPort: api

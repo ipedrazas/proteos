@@ -1,0 +1,29 @@
+# Plain manifests + kustomize rather than a Helm chart: the value surface is
+# small enough that a chart would be more machinery than configuration. Revisit
+# if it grows.
+#
+#   kubectl apply -k deploy/kubernetes/
+#
+# The Secret is NOT here on purpose — see README.md for creating
+# proteos-cluster-agent with the bearer token and the TLS pair.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - rbac.yaml
+  - service.yaml
+  - deployment.yaml
+  - networkpolicy.yaml
+  # runtimeclass-gvisor.yaml is an EXAMPLE: a RuntimeClass names a handler that
+  # must already be installed on the nodes, and on GKE the Sandbox feature
+  # creates it for you. Add it here only if you installed runsc yourself.
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: proteos
+
+images:
+  - name: ghcr.io/tavon-ai/proteos-node-agent
+    newTag: latest

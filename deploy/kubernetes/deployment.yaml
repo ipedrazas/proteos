@@ -1,0 +1,138 @@
+# The cluster-agent: a node-agent running the kubernetes driver.
+#
+# One replica is enough but not required. Every driver method is idempotent and
+# the API server holds all the state, so a second replica behind the Service
+# would work too — the control plane dials one URL and does not care which pod
+# answers. Leader election would buy nothing.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proteos-cluster-agent
+  namespace: proteos-system
+  labels:
+    app.kubernetes.io/name: proteos-cluster-agent
+    app.kubernetes.io/part-of: proteos
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: proteos-cluster-agent
+  template:
+    metadata:
+      labels:
+        # These labels are load-bearing: PROTEOS_K8S_AGENT_POD_LABELS below must
+        # match them exactly, because they are what every machine's
+        # NetworkPolicy names as its single permitted ingress peer. Change one
+        # without the other and machines become unreachable.
+        app.kubernetes.io/name: proteos-cluster-agent
+        app.kubernetes.io/part-of: proteos
+    spec:
+      serviceAccountName: proteos-cluster-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532 # distroless nonroot
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: node-agent
+          image: ghcr.io/tavon-ai/proteos-node-agent:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: api
+              containerPort: 9090
+          env:
+            - name: PROTEOS_AGENT_DRIVER
+              value: kubernetes
+            - name: PROTEOS_AGENT_ADDR
+              value: ":9090"
+            # The channel carries the bearer token, so the agent terminates TLS
+            # itself and the control plane pins its CA (TAV-27).
+            - name: PROTEOS_AGENT_TLS_CERT
+              value: /etc/proteos/tls/tls.crt
+            - name: PROTEOS_AGENT_TLS_KEY
+              value: /etc/proteos/tls/tls.key
+            - name: PROTEOS_AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: proteos-cluster-agent
+                  key: PROTEOS_AGENT_TOKEN
+
+            - name: PROTEOS_K8S_NAMESPACE
+              value: proteos-machines
+            # Read, not guessed: the ingress peer in every machine policy is
+            # THIS pod, in THIS namespace.
+            - name: PROTEOS_K8S_AGENT_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: PROTEOS_K8S_AGENT_POD_LABELS
+              value: '{"app.kubernetes.io/name":"proteos-cluster-agent"}'
+
+            # The sandbox. Machine pods run unauthenticated listeners and an
+            # agent with --dangerously-skip-permissions; on Firecracker the
+            # microVM is what makes that acceptable. Setting this to "" is an
+            # explicit downgrade to the node's shared kernel — see SECURITY.md.
+            - name: PROTEOS_K8S_RUNTIME_CLASS
+              value: gvisor
+
+            # Encryption at rest is the StorageClass's job on this backend: the
+            # per-machine LUKS volume key has no host to be opened on. Point
+            # this at an ENCRYPTED class.
+            - name: PROTEOS_K8S_STORAGE_CLASS
+              value: ""
+
+            # Egress always denies RFC1918, link-local (cloud metadata) and
+            # loopback; the pod/service CIDRs are cluster-specific, so set them
+            # or a machine can reach cluster services on a non-RFC1918 range.
+            - name: PROTEOS_K8S_CLUSTER_CIDRS
+              value: ""
+
+            # Optional: pin machine pods to a dedicated node pool (the one with
+            # the sandboxed runtime installed), e.g.
+            #   '{"proteos.io/machines":"true"}'
+            - name: PROTEOS_K8S_NODE_SELECTOR
+              value: ""
+
+            # Tracer bullet only: the image to use when a template carries no
+            # image_ref. K3 makes the control plane send one.
+            - name: PROTEOS_K8S_DEFAULT_IMAGE
+              value: ""
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/proteos/tls
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: api
+              scheme: HTTPS
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: api
+              scheme: HTTPS
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: tls
+          secret:
+            secretName: proteos-cluster-agent
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key

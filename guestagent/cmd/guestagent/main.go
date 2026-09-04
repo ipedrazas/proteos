@@ -90,6 +90,16 @@ func run() error {
 	}
 	defer p.Close()
 
+	// The workspace root follows the persist handle: bind-mounted at
+	// guestwire.WorkspaceRoot in disk mode, but <persist>/workspace in dir mode
+	// (the Kubernetes backend and the dev driver), where nothing is bind-mounted.
+	// Everything that resolves a project path — cwd validation, /download,
+	// code-server's open folder — must agree with it.
+	workspaceRoot := p.Workspace()
+	if workspaceRoot == "" {
+		workspaceRoot = guestwire.WorkspaceRoot
+	}
+
 	// Sessions drop to the unprivileged user and start in its $HOME (which it can
 	// write); the credential is nil for the root identity.
 	sessDir := ""
@@ -158,7 +168,7 @@ func run() error {
 		}
 		defer webLn.Close()
 
-		args := webfwd.DefaultCodeServerArgs(cfg.WebBackend, id.Home, "/workspace")
+		args := webfwd.DefaultCodeServerArgs(cfg.WebBackend, id.Home, workspaceRoot)
 		if cfg.CodeServerArgs != "" {
 			args = strings.Fields(cfg.CodeServerArgs)
 		}
@@ -173,7 +183,7 @@ func run() error {
 			Bin:  cfg.CodeServerBin,
 			Args: args,
 			Env:  p.ShellEnv(),
-			Dir:  "/workspace",
+			Dir:  workspaceRoot,
 			Cred: id.Credential(),
 			Addr: cfg.WebBackend,
 		})
@@ -232,7 +242,7 @@ func run() error {
 		}()
 	}
 
-	srv := server.New(mgr, p, sec, control)
+	srv := server.New(mgr, p, sec, control).WithWorkspaceRoot(workspaceRoot)
 	httpServer := &http.Server{
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,

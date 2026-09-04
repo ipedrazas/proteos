@@ -1,0 +1,19 @@
+# EXAMPLE — not applied by kustomization.yaml.
+#
+# A RuntimeClass only names a handler that must already exist in the node's
+# containerd config; applying this object does not install gVisor. Use it as the
+# shape to copy once runsc is installed on the machine nodes.
+#
+# On GKE, do not apply this at all: enabling GKE Sandbox on a node pool creates
+# a `gvisor` RuntimeClass for you.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc
+# Optional but recommended: pin sandboxed pods to the nodes that actually have
+# the handler, so a machine cannot be scheduled onto a node where the runtime
+# does not exist (it would stay Pending, which the driver reports as creating).
+# scheduling:
+#   nodeSelector:
+#     proteos.io/sandbox: gvisor

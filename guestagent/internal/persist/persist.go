@@ -150,6 +150,13 @@ func degraded(version string) *Persist {
 // Mode reports the persistence mode (guestwire.Persist*).
 func (p *Persist) Mode() string { return p.mode }
 
+// Workspace reports the resolved workspace root: guestwire.WorkspaceRoot in
+// disk mode (where it is bind-mounted), <dir>/workspace in dir mode (the
+// containerised/dev layout, where nothing is bind-mounted so the tree lives
+// where the persist root puts it). Empty in degraded mode, in which case
+// callers fall back to guestwire.WorkspaceRoot.
+func (p *Persist) Workspace() string { return p.work }
+
 // ShellEnv returns the environment entries that put the shell's $HOME (and a
 // WORKSPACE pointer) on the persistent disk. Empty in degraded mode.
 func (p *Persist) ShellEnv() []string {

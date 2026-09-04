@@ -18,9 +18,9 @@ ENV CGO_ENABLED=0 GOOS=linux GOFLAGS=-trimpath
 # Module graph first, for layer caching.
 COPY go.work go.work.sum ./
 COPY controlplane/go.mod controlplane/go.sum ./controlplane/
-COPY nodeagent/go.mod ./nodeagent/
+COPY nodeagent/go.mod nodeagent/go.sum ./nodeagent/
 COPY guestagent/go.mod guestagent/go.sum ./guestagent/
-# cli has no external dependencies, so it has no go.sum (same as nodeagent).
+# cli has no external dependencies, so it has no go.sum.
 COPY cli/go.mod ./cli/
 RUN go mod download
 

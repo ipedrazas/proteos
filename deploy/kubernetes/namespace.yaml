@@ -1,0 +1,35 @@
+# Two namespaces, because they are two different trust levels.
+#
+# proteos-system holds the cluster-agent: it has API-server credentials and is
+# the only pod permitted to reach a machine's guest ports.
+#
+# proteos-machines holds the machines themselves: untrusted workloads running
+# someone's agent session. Everything scoped to that namespace — the RBAC Role,
+# the default-deny NetworkPolicy, the ResourceQuota an operator adds — is scoped
+# there precisely so a machine cannot escape into the rest of the cluster.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: proteos-system
+  labels:
+    app.kubernetes.io/part-of: proteos
+    # NetworkPolicy peers select this namespace by its well-known name label.
+    # The API server sets it automatically, but declaring it keeps the manifests
+    # readable and works on older clusters.
+    kubernetes.io/metadata.name: proteos-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: proteos-machines
+  labels:
+    app.kubernetes.io/part-of: proteos
+    kubernetes.io/metadata.name: proteos-machines
+    # Pod Security admission. Machine pods run as root INSIDE a sandboxed
+    # runtime (the guest-agent keeps its root-agent / non-root-`dev` split), so
+    # they do not satisfy the `restricted` profile. `baseline` still rejects
+    # privileged pods, host namespaces, hostPath and unsafe sysctls, which is
+    # what actually matters here.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

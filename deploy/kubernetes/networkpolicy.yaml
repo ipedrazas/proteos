@@ -1,0 +1,82 @@
+# Namespace-wide default-deny for machines.
+#
+# The driver writes a per-machine policy on every ensure, but there is a window
+# between a pod being created and its policy landing, and there are objects the
+# driver did not create (a debug pod someone kubectl-runs into the namespace).
+# A default-deny baseline closes both: the per-machine policy then only ever
+# ADDS the narrow ingress and egress a machine is allowed.
+#
+# NetworkPolicy is additive — a pod's effective permission is the union of every
+# policy selecting it — so this empty-selector deny does not fight the
+# per-machine rules; it removes the "no policy selects me, so everything is
+# allowed" default.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: proteos-machines
+  labels:
+    app.kubernetes.io/part-of: proteos
+spec:
+  podSelector: {} # every pod in the namespace
+  policyTypes: [Ingress, Egress]
+---
+# The cluster-agent's own policy. Ingress: only the control plane, which arrives
+# from outside the cluster, so this cannot be expressed as a pod selector —
+# tighten `from` to your ingress controller or the CP's source range once you
+# know it. Egress: the API server, cluster DNS, and the machine guest ports.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: proteos-cluster-agent
+  namespace: proteos-system
+  labels:
+    app.kubernetes.io/part-of: proteos
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: proteos-cluster-agent
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 9090
+  egress:
+    # Cluster DNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The guest tunnel: the four guest ports, on machine pods only.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: proteos-machines
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: proteos
+      ports:
+        - protocol: TCP
+          port: 1024
+        - protocol: TCP
+          port: 1025
+        - protocol: TCP
+          port: 1026
+        - protocol: TCP
+          port: 1027
+    # The API server. Its address is cluster-specific (often a non-pod IP
+    # outside every CIDR a selector can name), so this is left broad; narrow it
+    # to your control-plane endpoint if you can.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443

@@ -109,6 +109,17 @@ func New(mgr *term.Manager, persist Persister, sec SecretStore, control Controll
 	return &Server{mgr: mgr, persist: persist, sec: sec, control: control}
 }
 
+// WithWorkspaceRoot overrides the directory tree a session cwd (and /download)
+// must point into. Production on Firecracker leaves it empty — the workspace is
+// bind-mounted at guestwire.WorkspaceRoot — but in dir-mode persistence (the
+// Kubernetes backend, and the dev driver) the tree lives under the persist root
+// instead, so main.go passes persist.Workspace(). Returns the Server for
+// chaining.
+func (s *Server) WithWorkspaceRoot(root string) *Server {
+	s.workspaceRoot = root
+	return s
+}
+
 // Handler builds the HTTP handler. /terminal serves sessions; /resume + /info
 // are the Phase 4 control surface; /secrets is the Phase 5 injection surface;
 // /healthz is a trivial liveness probe; /metrics exposes Prometheus metrics.
