@@ -237,6 +237,18 @@ func (a *agent) terminal(t *testing.T, id, session string) (*wsclient.Conn, net.
 	return ws, tunnel
 }
 
+// echoMarker returns a shell fragment printing marker, written so that the
+// marker does NOT appear literally in the command text.
+//
+// A PTY echoes what is typed into it, so a command containing its own marker
+// matches against the echo of the command rather than its output: the assertion
+// passes before the command has run, and every later assertion reads a buffer
+// that never contained a result. The empty ” splits the token for the reader
+// and the matcher while the shell still prints it whole.
+func echoMarker(marker string) string {
+	return "echo " + marker[:1] + "''" + marker[1:]
+}
+
 // runInGuest sends a command to a PTY session and waits for a marker it echoes,
 // so the assertion is on the command having actually completed rather than on a
 // timer.
@@ -299,14 +311,14 @@ func TestKindLifecycle(t *testing.T) {
 
 	// The tunnel: agent → pod IP → guest-agent, and a real PTY at the end of it.
 	ws, tunnel := a.terminal(t, id, "e2e")
-	out := runInGuest(t, ws, "id -un && echo READY-MARKER", "READY-MARKER", 60*time.Second)
+	out := runInGuest(t, ws, "id -un && "+echoMarker("READY-MARKER"), "READY-MARKER", 60*time.Second)
 	if !strings.Contains(out, "dev") {
 		t.Errorf("session does not run as the unprivileged `dev` user; got %q", tail(out))
 	}
 
 	// Write into the workspace, so the next phase can prove the volume survived.
 	runInGuest(t, ws,
-		`echo persisted-by-e2e > "$PROTEOS_WORKSPACE/marker.txt" && sync && echo WROTE-MARKER`,
+		`echo persisted-by-e2e > "$PROTEOS_WORKSPACE/marker.txt" && sync && `+echoMarker("WROTE-MARKER"),
 		"WROTE-MARKER", 60*time.Second)
 	ws.Close()
 	tunnel.Close()
@@ -336,7 +348,7 @@ func TestKindLifecycle(t *testing.T) {
 	defer tunnel.Close()
 	defer ws.Close()
 	out = runInGuest(t, ws,
-		`cat "$PROTEOS_WORKSPACE/marker.txt"; echo READ-MARKER`, "READ-MARKER", 60*time.Second)
+		`cat "$PROTEOS_WORKSPACE/marker.txt"; `+echoMarker("READ-MARKER"), "READ-MARKER", 60*time.Second)
 	if !strings.Contains(out, "persisted-by-e2e") {
 		t.Errorf("the workspace did not survive a stop/start — the PVC is not doing its job; got %q", tail(out))
 	}
@@ -370,10 +382,10 @@ func TestKindPreviewForward(t *testing.T) {
 	// A trivial in-guest server on 8080, backgrounded so the PTY stays usable.
 	runInGuest(t, ws,
 		`nohup node -e "require('http').createServer((q,s)=>s.end('preview-ok')).listen(8080,'127.0.0.1')" `+
-			`>/tmp/preview.log 2>&1 & echo STARTED-PREVIEW`,
+			`>/tmp/preview.log 2>&1 & `+echoMarker("STARTED-PREVIEW"),
 		"STARTED-PREVIEW", 60*time.Second)
 	runInGuest(t, ws,
-		`for i in $(seq 1 40); do (exec 3<>/dev/tcp/127.0.0.1/8080) 2>/dev/null && break; sleep 0.5; done; echo PREVIEW-LISTENING`,
+		`for i in $(seq 1 40); do (exec 3<>/dev/tcp/127.0.0.1/8080) 2>/dev/null && break; sleep 0.5; done; `+echoMarker("PREVIEW-LISTENING"),
 		"PREVIEW-LISTENING", 60*time.Second)
 
 	conn := a.dialGuest(t, id, 8080)

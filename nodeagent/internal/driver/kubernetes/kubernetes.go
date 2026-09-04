@@ -408,8 +408,13 @@ func (d *Driver) Reattach(ctx context.Context) error {
 
 // pvcExists reports whether a machine's volume is still present — the signal
 // that a machine exists but is stopped, as opposed to never having existed.
+//
+// A volume being deleted does NOT count. Kubernetes holds a pvc-protection
+// finalizer on a claim while a pod still mounts it, so for the whole of a
+// destroy the PVC remains visible to a Get; treating that as "the machine
+// exists" makes a destroyed machine report stopped instead of gone.
 func (d *Driver) pvcExists(ctx context.Context, machineID string) bool {
-	_, err := d.client.CoreV1().PersistentVolumeClaims(d.cfg.Namespace).
+	pvc, err := d.client.CoreV1().PersistentVolumeClaims(d.cfg.Namespace).
 		Get(ctx, pvcName(machineID), metav1.GetOptions{})
-	return err == nil
+	return err == nil && !terminating(pvc.ObjectMeta)
 }

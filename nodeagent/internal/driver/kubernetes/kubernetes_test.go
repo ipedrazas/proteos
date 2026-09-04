@@ -2,6 +2,7 @@ package kubernetes_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -395,6 +396,67 @@ func TestStopKeepsThePVCAndReportsStopped(t *testing.T) {
 	if _, err := cluster.CoreV1().PersistentVolumeClaims(testNamespace).
 		Get(ctx, "m-"+id+"-persist", metav1.GetOptions{}); err != nil {
 		t.Errorf("stop deleted the machine's volume: %v", err)
+	}
+}
+
+// A real cluster does not delete instantly: a pod lives out its termination
+// grace period and a PVC is pinned by its pvc-protection finalizer while a pod
+// mounts it. Both stay visible to a Get, and treating them as present made a
+// destroyed machine keep reporting 200 instead of vanishing. The fake clientset
+// deletes immediately, so this has to be staged by hand.
+func TestTerminatingObjectsAreTreatedAsGone(t *testing.T) {
+	d, cluster := newDriver(t, 0)
+	ctx := context.Background()
+	const id = "cccccccc-0000-4000-8000-00000000000d"
+
+	if _, err := d.EnsureRunning(ctx, spec(id)); err != nil {
+		t.Fatalf("EnsureRunning: %v", err)
+	}
+
+	now := metav1.Now()
+	pod, err := cluster.CoreV1().Pods(testNamespace).Get(ctx, "m-"+id, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod.DeletionTimestamp = &now
+	if _, err := cluster.CoreV1().Pods(testNamespace).Update(ctx, pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pod dying, volume still there: the machine is stopping, not running.
+	st, err := d.Status(ctx, id)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if st.State != api.StateStopping {
+		t.Errorf("state = %q while the pod terminates, want stopping", st.State)
+	}
+
+	// Volume dying too (a destroy): the machine is gone, even though both
+	// objects still answer a Get.
+	pvc, err := cluster.CoreV1().PersistentVolumeClaims(testNamespace).
+		Get(ctx, "m-"+id+"-persist", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pvc.DeletionTimestamp = &now
+	if _, err := cluster.CoreV1().PersistentVolumeClaims(testNamespace).
+		Update(ctx, pvc, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Status(ctx, id); !errors.Is(err, driver.ErrUnknownMachine) {
+		t.Errorf("Status during destroy = %v, want ErrUnknownMachine", err)
+	}
+
+	// And it must not linger in List either.
+	list, err := d.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range list {
+		if m.MachineID == id {
+			t.Errorf("List still reports the destroyed machine as %q", m.State)
+		}
 	}
 }
 
