@@ -151,6 +151,12 @@ services:
       PROTEOS_NODE_CA_FILE: ${PROTEOS_NODE_CA_FILE:-}
       PROTEOS_AGENT_TOKEN: ${PROTEOS_AGENT_TOKEN:?shared bearer token (must match the node-agent)}
       PROTEOS_HOST_NAME: ${PROTEOS_HOST_NAME:-proxmox-fc-1}
+      # The backend this host's agent runs (K3): firecracker | dev | kubernetes.
+      PROTEOS_HOST_DRIVER: ${PROTEOS_HOST_DRIVER:-firecracker}
+      # TAV-37: additional hosts beyond the primary one, as a JSON array of
+      # {"name","url"} with an optional "driver" (K3). Unset ⇒ single-host, this
+      # deployment's default. See .env.example for the shape.
+      PROTEOS_HOSTS: ${PROTEOS_HOSTS:-}
 
       # Image refs stamped on each machine; must match files staged in the
       # agent's PROTEOS_AGENT_IMAGES_DIR.
@@ -158,6 +164,9 @@ services:
       # With a template catalog set (below), PROTEOS_ROOTFS_REF is only the
       # fallback used to synthesize the "base" template.
       PROTEOS_ROOTFS_REF: ${PROTEOS_ROOTFS_REF:-ubuntu-24.04.ext4}
+      # The OCI image the "base" template boots on a kubernetes host (K3).
+      # Unset on a Firecracker-only fleet, which has no use for it.
+      PROTEOS_IMAGE_REF: ${PROTEOS_IMAGE_REF:-}
       PROTEOS_MACHINE_VCPUS: ${PROTEOS_MACHINE_VCPUS:-2}
       PROTEOS_MACHINE_MEM_MIB: ${PROTEOS_MACHINE_MEM_MIB:-2048}
       PROTEOS_MACHINE_DISK_MIB: ${PROTEOS_MACHINE_DISK_MIB:-10240}
