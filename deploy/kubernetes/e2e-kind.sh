@@ -199,14 +199,32 @@ if [[ $RC -ne 0 ]]; then
 fi
 
 # --- 7. no leaks ------------------------------------------------------------
-# Every test destroys its machine, so the namespace must be empty. A leaked pod
-# or PVC here means Destroy is not the cleanup the control plane believes it is.
-LEAKED="$(kubectl -n "$MACHINE_NS" get pods,pvc,networkpolicies \
-  -l app.kubernetes.io/managed-by=proteos --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+# Every test destroys its machine, so the namespace must end up empty. A pod or
+# PVC left behind means Destroy is not the cleanup the control plane believes
+# it is.
+#
+# But deletion is not instant: a pod lives out its termination grace period and
+# a PVC is pinned by its pvc-protection finalizer until the pod releases it, so
+# for a few seconds after the last test both are still listed as Terminating.
+# Counting those as leaks is the same mistake the driver used to make — treating
+# "still visible to a Get" as "still exists" — so wait for the deletions to
+# actually complete. That is the stronger check anyway: it catches a destroy
+# that is wedged on a finalizer, which a snapshot count never would.
+log "waiting for destroyed machine objects to finish terminating"
+leak_count() {
+  kubectl -n "$MACHINE_NS" get pods,pvc,networkpolicies \
+    -l app.kubernetes.io/managed-by=proteos --no-headers 2>/dev/null | grep -c . || true
+}
+for _ in $(seq 1 60); do
+  [[ "$(leak_count)" == "0" ]] && break
+  sleep 2
+done
+
+LEAKED="$(leak_count)"
 if [[ "$LEAKED" != "0" ]]; then
   kubectl -n "$MACHINE_NS" get pods,pvc,networkpolicies -l app.kubernetes.io/managed-by=proteos
   FAILED=1
-  die "$LEAKED machine object(s) survived Destroy"
+  die "$LEAKED machine object(s) still present two minutes after Destroy"
 fi
 ok "no machine objects leaked"
 
