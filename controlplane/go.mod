@@ -12,7 +12,7 @@ require (
 	github.com/tavon-ai/proteos/nodeagent v0.0.0-20260625141840-8c8bb9897f9b
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.56.0
 )
 
 require (
