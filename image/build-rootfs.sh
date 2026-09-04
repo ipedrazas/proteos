@@ -112,183 +112,45 @@ die() {
   exit 1
 }
 
-# dl URL [OUTFILE] — fetch over curl or wget (whichever is present).
-dl() {
-  if command -v curl >/dev/null 2>&1; then
-    if [[ -n ${2:-} ]]; then curl -fsSL -o "$2" "$1"; else curl -fsSL "$1"; fi
-  elif command -v wget >/dev/null 2>&1; then
-    if [[ -n ${2:-} ]]; then wget -qO "$2" "$1"; else wget -qO - "$1"; fi
-  else
-    die "need curl or wget for --claude-bootstrap"
-  fi
-}
+# The pinned-artifact fetch layer (dl, sha256_of, the arch maps, and
+# fetch_claude/node/codeserver/gh) is shared with image/guest.Dockerfile so the
+# ext4 and OCI guest images install the same versions, verified the same way.
+# shellcheck source-path=SCRIPTDIR source=lib/fetch.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/fetch.sh"
 
-# fetch_claude_official TARGET DEST — download the pinned Claude Code native
-# binary from Anthropic's release endpoint and verify it against the published
-# manifest.json checksum (the same artifact + integrity check bootstrap.sh uses).
-# TARGET is "stable", "latest", or an exact X.Y.Z. Sets CLAUDE_VERSION/CLAUDE_SHA256.
-fetch_claude_official() {
-  local target="$1" dest="$2"
-  local base="https://downloads.claude.ai/claude-code-releases"
-
-  local arch platform
-  case "$(uname -m)" in
-    x86_64 | amd64) arch="x64" ;;
-    arm64 | aarch64) arch="arm64" ;;
-    *) die "unsupported arch for Claude Code: $(uname -m)" ;;
-  esac
-  platform="${CLAUDE_PLATFORM:-linux-$arch}"  # base is glibc; pass --claude-platform for musl
-
-  # Resolve a channel to a concrete version; accept an explicit X.Y.Z as-is.
-  local version
-  if [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-    version="$target"
-  else
-    version="$(dl "$base/$target")" || die "resolve Claude channel '$target'"
-  fi
-  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || die "bad Claude version resolved from '$target': $version"
-
-  local manifest checksum
-  manifest="$(dl "$base/$version/manifest.json")" || die "fetch Claude manifest for $version"
-  if command -v jq >/dev/null 2>&1; then
-    checksum="$(printf '%s' "$manifest" | jq -r ".platforms[\"$platform\"].checksum // empty")"
-  else
-    # bash fallback: collapse whitespace, then regex the platform's checksum.
-    checksum="$(printf '%s' "$manifest" | tr -d '\n\r\t' \
-      | grep -oE "\"$platform\"[^}]*\"checksum\"[[:space:]]*:[[:space:]]*\"[a-f0-9]{64}\"" \
-      | grep -oE '[a-f0-9]{64}' | head -1)"
-  fi
-  [[ "$checksum" =~ ^[a-f0-9]{64}$ ]] || die "no checksum for platform '$platform' in Claude manifest $version"
-
-  dl "$base/$version/$platform/claude" "$dest" || die "download Claude binary $version/$platform"
-  local actual
-  actual="$(sha256sum "$dest" | awk '{print $1}')"
-  [[ "$actual" == "$checksum" ]] || die "Claude checksum mismatch: manifest $checksum, got $actual"
-  chmod +x "$dest"
-  CLAUDE_VERSION="$version"
-  CLAUDE_SHA256="$checksum"
-  ok "fetched Claude Code $version ($platform), sha256 verified against manifest"
-}
-
-# node_arch maps uname -m onto the nodejs.org dist arch tag.
-node_arch() {
-  case "$(uname -m)" in
-    x86_64 | amd64) echo "x64" ;;
-    arm64 | aarch64) echo "arm64" ;;
-    *) die "unsupported arch for Node: $(uname -m)" ;;
-  esac
-}
-
-# install_node MNT VERSION [SHA256] — fetch the Node LTS tarball from nodejs.org,
-# verify its sha256 (against the published SHASUMS256 if not given), and unpack it
-# into the image's /usr/local (node + npm on PATH). A shared runtime for the
-# npm-distributed agents (Phase 6 decision #4). An empty VERSION resolves the
-# latest LTS (the --claude-bootstrap "latest by default" pattern).
+# install_node MNT VERSION [SHA256] — fetch the Node LTS tarball (shared
+# fetch_node: resolves the latest LTS when unpinned and verifies the sha256
+# against the published SHASUMS256) and unpack it into the image's /usr/local
+# (node + npm on PATH). A shared runtime for the npm-distributed agents (Phase 6
+# decision #4).
 install_node() {
   local mnt="$1" version="$2" want_sha="$3"
-  local arch tarball url
-  arch="$(node_arch)"
-
-  # Resolve "latest LTS" from the canonical dist index.json when unpinned. It is
-  # sorted newest-first, so the first entry whose "lts" is not false is the latest
-  # LTS release.
-  if [[ -z $version ]]; then
-    log "resolving latest Node LTS"
-    local index
-    index="$(dl "https://nodejs.org/dist/index.json")" || die "fetch Node index.json"
-    if command -v jq >/dev/null 2>&1; then
-      version="$(printf '%s' "$index" | jq -r 'map(select(.lts != false))[0].version')"
-    else
-      # One object per line (objects start with '{'; nested arrays use '['), then
-      # take the first with an "lts":"<name>" (false has no quote after the colon).
-      version="$(printf '%s' "$index" | tr '{' '\n' \
-        | grep -m1 '"lts":"' \
-        | grep -oE '"version":"v[0-9]+\.[0-9]+\.[0-9]+"' \
-        | grep -oE 'v[0-9.]+')"
-    fi
-    [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "could not resolve latest Node LTS (got '$version')"
-    ok "latest Node LTS is $version"
-  fi
-  tarball="node-${version}-linux-${arch}.tar.xz"
-  url="https://nodejs.org/dist/${version}/${tarball}"
-  NODE_VERSION="$version"
-
-  log "fetching Node ${version} (${arch})"
-  dl "$url" "$WORK/$tarball" || die "download Node $version"
-
-  local actual
-  actual="$(sha256sum "$WORK/$tarball" | awk '{print $1}')"
-  if [[ -z $want_sha ]]; then
-    # Verify against the dist SHASUMS256.txt rather than trusting blindly.
-    want_sha="$(dl "https://nodejs.org/dist/${version}/SHASUMS256.txt" | grep " ${tarball}\$" | awk '{print $1}')"
-    [[ -n $want_sha ]] || die "no SHASUMS256 entry for $tarball"
-  fi
-  [[ "$actual" == "$want_sha" ]] || die "Node sha256 mismatch: expected $want_sha, got $actual"
-  NODE_SHA256="$want_sha"
-  ok "Node tarball sha256 verified ($actual)"
+  local tarball
+  fetch_node "$version" "$want_sha" "$WORK/node.tar.xz"
+  tarball="$WORK/node.tar.xz"
 
   # Unpack into /usr/local, stripping the top-level node-<ver> dir so binaries
   # land at /usr/local/bin/{node,npm,npx}.
-  sudo tar -xJf "$WORK/$tarball" -C "$mnt/usr/local" --strip-components=1
-  ok "Node ${version} unpacked into /usr/local"
-}
-
-# cs_arch maps uname -m onto the code-server release arch tag.
-cs_arch() {
-  case "$(uname -m)" in
-    x86_64 | amd64) echo "amd64" ;;
-    arm64 | aarch64) echo "arm64" ;;
-    *) die "unsupported arch for code-server: $(uname -m)" ;;
-  esac
+  sudo tar -xJf "$tarball" -C "$mnt/usr/local" --strip-components=1
+  ok "Node ${NODE_VERSION} unpacked into /usr/local"
 }
 
 # install_codeserver MNT VERSION [SHA256] — fetch the pinned code-server
 # STANDALONE release tarball from GitHub (it bundles its own Node, so it needs no
-# system Node and stays self-contained — Phase 8 decision #5), verify its sha256,
-# and unpack it into /usr/local/lib/code-server with /usr/local/bin/code-server
-# symlinked to its entrypoint. An empty VERSION resolves the latest GitHub release.
-# The editor binds loopback only and is started lazily by the guest agent's web
-# forward; nothing here wires auth (the gateway authenticates). Sets CS_VERSION.
+# system Node and stays self-contained — Phase 8 decision #5) via the shared
+# fetch_codeserver, and unpack it into /usr/local/lib/code-server with
+# /usr/local/bin/code-server symlinked to its entrypoint. The editor binds
+# loopback only and is started lazily by the guest agent's web forward; nothing
+# here wires auth (the gateway authenticates). Sets CS_VERSION.
 install_codeserver() {
   local mnt="$1" version="$2" want_sha="$3"
-  local arch tarball url
-  arch="$(cs_arch)"
+  fetch_codeserver "$version" "$want_sha" "$WORK/code-server.tar.gz"
 
-  if [[ -z $version ]]; then
-    log "resolving latest code-server release"
-    local tag
-    tag="$(dl https://api.github.com/repos/coder/code-server/releases/latest \
-      | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"v[0-9]+\.[0-9]+\.[0-9]+"' \
-      | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)" || die "resolve code-server latest"
-    [[ -n $tag ]] || die "could not resolve latest code-server release"
-    version="${tag#v}"
-    ok "latest code-server is $version"
-  fi
-  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || die "bad code-server version: $version"
-
-  tarball="code-server-${version}-linux-${arch}.tar.gz"
-  url="https://github.com/coder/code-server/releases/download/v${version}/${tarball}"
-  log "fetching code-server ${version} (${arch})"
-  dl "$url" "$WORK/$tarball" || die "download code-server $version"
-
-  local actual
-  actual="$(sha256sum "$WORK/$tarball" | awk '{print $1}')"
-  if [[ -n $want_sha ]]; then
-    [[ "$actual" == "$want_sha" ]] || die "code-server sha256 mismatch: expected $want_sha, got $actual"
-    ok "code-server sha256 verified ($actual)"
-  else
-    log "WARNING: --codeserver-sha256 not given; pinning to the tarball's own sha256 ($actual)"
-  fi
-  CS_SHA256="$actual"
-
-  # Unpack into /usr/local/lib/code-server (strip the top-level versioned dir),
-  # then symlink the entrypoint onto PATH.
   sudo rm -rf "$mnt/usr/local/lib/code-server"
   sudo mkdir -p "$mnt/usr/local/lib/code-server"
-  sudo tar -xzf "$WORK/$tarball" -C "$mnt/usr/local/lib/code-server" --strip-components=1
+  sudo tar -xzf "$WORK/code-server.tar.gz" -C "$mnt/usr/local/lib/code-server" --strip-components=1
   sudo ln -sf ../lib/code-server/bin/code-server "$mnt/usr/local/bin/code-server"
-  CS_VERSION="$version"
-  ok "code-server ${version} installed (/usr/local/bin/code-server)"
+  ok "code-server ${CS_VERSION} installed (/usr/local/bin/code-server)"
 }
 
 # npm_global MNT SPEC — install an npm package globally INSIDE the image via
@@ -619,46 +481,16 @@ install_python() {
   ok "python installed (python ${PYTHON_VERSION})"
 }
 
-# go_arch maps uname -m onto the go.dev dist arch tag.
-go_arch() {
-  case "$(uname -m)" in
-    x86_64 | amd64) echo "amd64" ;;
-    arm64 | aarch64) echo "arm64" ;;
-    *) die "unsupported arch for Go: $(uname -m)" ;;
-  esac
-}
-
-# install_go MNT VERSION — fetch the pinned Go toolchain tarball from go.dev,
-# verify its sha256 against the published <tarball>.sha256, and unpack it into the
-# image's /usr/local/go (the tarball's own top-level dir). Go is put on PATH for
-# guest shells by install_shell_env. Sets GO_SHA256.
+# install_go MNT VERSION — fetch the pinned Go toolchain tarball (shared
+# fetch_go, which verifies the sha256 against go.dev's JSON index) and unpack it
+# into the image's /usr/local/go (the tarball's own top-level dir). Go is put on
+# PATH for guest shells by install_shell_env. Sets GO_SHA256.
 install_go() {
   local mnt="$1" version="$2"
-  local arch tarball url
-  arch="$(go_arch)"
-  tarball="go${version}.linux-${arch}.tar.gz"
-  url="https://go.dev/dl/${tarball}"
-  log "fetching Go ${version} (${arch})"
-  dl "$url" "$WORK/$tarball" || die "download Go $version"
-  local actual want
-  actual="$(sha256sum "$WORK/$tarball" | awk '{print $1}')"
-  # go.dev does NOT serve detached <tarball>.sha256 files — that path returns the
-  # site's HTML shell with HTTP 200 (so curl -f does not catch it, and the page
-  # gets mistaken for a checksum). The published sha256 lives in the JSON index;
-  # collapse it to one line and pull the sha256 from the same object as our file.
-  want="$(dl "https://go.dev/dl/?mode=json&include=all" 2>/dev/null | tr -d '\n ' \
-    | grep -oE "\"filename\":\"${tarball//./\\.}\"[^}]*\"sha256\":\"[0-9a-f]{64}\"" \
-    | grep -oE '[0-9a-f]{64}' | head -1)" || true
-  if [[ -n $want ]]; then
-    [[ "$actual" == "$want" ]] || die "Go sha256 mismatch: expected $want, got $actual"
-    ok "Go tarball sha256 verified ($actual)"
-  else
-    log "WARNING: could not fetch Go checksum; pinning to the tarball's own sha256 ($actual)"
-  fi
-  GO_SHA256="$actual"
+  fetch_go "$version" "" "$WORK/go.tar.gz"
   sudo rm -rf "$mnt/usr/local/go"
-  sudo tar -xzf "$WORK/$tarball" -C "$mnt/usr/local"
-  ok "Go ${version} unpacked into /usr/local/go"
+  sudo tar -xzf "$WORK/go.tar.gz" -C "$mnt/usr/local"
+  ok "Go ${GO_VERSION} unpacked into /usr/local/go"
 }
 
 # install_taskfile MNT VERSION — fetch the pinned go-task release tarball from
@@ -703,50 +535,18 @@ install_taskfile() {
 # the latest GitHub release. Sets GH_VERSION/GH_SHA256.
 install_gh() {
   local mnt="$1" version="$2" want_sha="$3"
-  local arch tarball url
-  arch="$(go_arch)"   # gh uses the same amd64/arm64 release tags as Go
+  fetch_gh "$version" "$want_sha" "$WORK/gh.tar.gz"
 
-  if [[ -z $version ]]; then
-    log "resolving latest gh (GitHub CLI) release"
-    local tag
-    tag="$(dl https://api.github.com/repos/cli/cli/releases/latest \
-      | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"v[0-9]+\.[0-9]+\.[0-9]+"' \
-      | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)" || die "resolve gh latest"
-    [[ -n $tag ]] || die "could not resolve latest gh release"
-    version="${tag#v}"
-    ok "latest gh is $version"
-  fi
-  version="${version#v}"   # accept a pin given with or without the leading v
-  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || die "bad gh version: $version"
-
-  tarball="gh_${version}_linux_${arch}.tar.gz"
-  url="https://github.com/cli/cli/releases/download/v${version}/${tarball}"
-  log "fetching gh ${version} (${arch})"
-  dl "$url" "$WORK/$tarball" || die "download gh $version"
-  local actual
-  actual="$(sha256sum "$WORK/$tarball" | awk '{print $1}')"
-  if [[ -z $want_sha ]]; then
-    want_sha="$(dl "https://github.com/cli/cli/releases/download/v${version}/gh_${version}_checksums.txt" 2>/dev/null \
-      | grep " ${tarball}\$" | awk '{print $1}')" || true
-  fi
-  if [[ -n $want_sha ]]; then
-    [[ "$actual" == "$want_sha" ]] || die "gh sha256 mismatch: expected $want_sha, got $actual"
-    ok "gh tarball sha256 verified ($actual)"
-  else
-    log "WARNING: could not fetch gh checksums; pinning to the tarball's own sha256 ($actual)"
-  fi
-  GH_SHA256="$actual"
   # The tarball unpacks to gh_<ver>_linux_<arch>/{bin/gh,share/man,...}; --strip the
   # top-level dir into a temp tree, then install just the binary onto PATH.
   local tmp="$WORK/gh"
   rm -rf "$tmp"
   mkdir -p "$tmp"
-  tar -xzf "$WORK/$tarball" -C "$tmp" --strip-components=1
+  tar -xzf "$WORK/gh.tar.gz" -C "$tmp" --strip-components=1
   [[ -f "$tmp/bin/gh" ]] || die "gh tarball did not contain bin/gh"
   sudo install -D -m 0755 "$tmp/bin/gh" "$mnt/usr/local/libexec/proteos/gh"
   sudo install -D -m 0755 "$GH_WRAPPER_SRC" "$mnt/usr/local/bin/gh"
-  GH_VERSION="$version"
-  ok "gh ${version} installed (/usr/local/libexec/proteos/gh + auth wrapper at /usr/local/bin/gh)"
+  ok "gh ${GH_VERSION} installed (/usr/local/libexec/proteos/gh + auth wrapper at /usr/local/bin/gh)"
 }
 
 # emit_alias NAME=VALUE — print a shell `alias NAME='VALUE'` line, single-quoting
@@ -1241,7 +1041,7 @@ if [[ $CLAUDE_BOOTSTRAP -eq 1 ]]; then
   CLAUDE_TARGET="${CLAUDE_VERSION:-stable}"
   log "fetching Claude Code via Anthropic release endpoint (target: $CLAUDE_TARGET)"
   CLAUDE_BIN="$WORK/claude"
-  fetch_claude_official "$CLAUDE_TARGET" "$CLAUDE_BIN"
+  fetch_claude "$CLAUDE_TARGET" "$CLAUDE_BIN"
 fi
 
 # --- 2. copy + grow the base image -------------------------------------------
