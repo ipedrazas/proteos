@@ -3,9 +3,10 @@
 > Source: request to "delegate the execution of a remote agent to a Kubernetes
 > cluster" (2026-09-04). Feature work off the master-plan numbering, like
 > `port-preview` and `multi-machine`; stages labelled **K0–K6**.
-> Status: **K0–K2 implemented and verified against a real cluster**
-> (2026-09-04). The tracer bullet of the "Suggested first PR" below, complete
-> including the kind e2e job. K3–K6 not started. See "Implementation notes" at
+> Status: **K0–K3 implemented** (2026-09-04); K0–K2 verified against a real
+> cluster via the kind e2e job. K4–K6 not started. With K3 the control plane can
+> place a machine on a cluster host on its own — before it, a machine could only
+> be created there by driving the agent directly. See "Implementation notes" at
 > the end for where the build departed from this plan, and "What the kind e2e
 > found" for the bugs that only a real API server could surface.
 
@@ -333,6 +334,10 @@ domain resolution reuse), `guest.go` (`DialGuest`), `capacity.go`.
 
 ### K3 — Control-plane additive changes
 
+> Landed 2026-09-04 as migrations `000021_hosts_driver` +
+> `000022_machines_image_ref` (17–20 were taken). See the K3 implementation
+> notes below.
+
 - **Migration `000017_hosts_driver`**: `ALTER TABLE hosts ADD COLUMN driver text
   NOT NULL DEFAULT 'firecracker'`; `PROTEOS_HOSTS` entries gain `"driver"`.
   Surface it in the admin console host list.
@@ -523,12 +528,49 @@ Two of the early "failures" were the test lying to itself: a PTY echoes what is
 typed into it, so a command containing its own completion marker matched the
 echo rather than the output. Worth knowing before writing the next one.
 
+## Implementation notes (K3, 2026-09-04)
+
+`hosts.driver` (000021) and `machines.image_ref` (000022), template `image_ref`
++ `Template.SupportsDriver`, the scheduler's driver filter,
+poweroff-for-kubernetes in `Service.Stop`, and `backend` in the API, the console
+and the admin fleet table. Config: `PROTEOS_HOST_DRIVER`, `"driver"` in
+`PROTEOS_HOSTS`, `PROTEOS_IMAGE_REF`.
+
+### Departures from the plan
+
+1. **The driver-kind vocabulary lives in `nodeagent/api`**, next to the stop
+   modes and states, not in a control-plane package. Both sides of the fleet
+   name these kinds — the agent selects one with `PROTEOS_AGENT_DRIVER`, the
+   control plane records which one a host runs — so the wire-contract package is
+   where they cannot drift. `DriverSupportsHibernate` and `DriverBootsImage` are
+   the capability helpers the plan asked for; they read as questions about a
+   backend rather than string compares at each call site.
+2. **`resolveCreate` returns a `Template`, not a pair of refs.** Placement now
+   depends on the whole template rather than one ref, and
+   `ensureOnAgent`/`buildEnsureRequest` read every ref off the machine row
+   instead of taking two of them as arguments — all three callers were already
+   passing the row's own values.
+3. **An empty driver in `UpsertHostByName` means the column default.** The kind
+   is validated at config load (`config.validateHostDriver`), so by the time a
+   host is seeded a wrong value is already impossible; leaving the query
+   permissive keeps every caller that does not care about backends — the tests,
+   and any caller predating the column — writing hosts as before, while the
+   CHECK constraint still rejects a genuinely unknown kind.
+4. **The `rootfs_ref`-as-image fallback in the kubernetes driver is gone.** It
+   existed only until `image_ref` had a control plane behind it. Keeping it
+   would turn a placement mistake into an `ImagePullBackOff` on an ext4
+   filename; `driver.ErrBadSpec` says what is actually wrong.
+5. **Startup warns about a host no template can boot.** The plan's failure mode
+   was a `503 no_capacity` the first time a user tried to create a machine. The
+   catalog and the fleet are both known at startup, so the mismatch is reported
+   there too.
+6. **`PROTEOS_HOSTS` now reaches the app-stack container.** It was documented in
+   `.env.example` but never passed through `compose.yaml`, so registering a
+   cluster host by following `deploy/kubernetes/README.md` would have done
+   nothing on the shipped stack.
+
 ### Still open before this is usable end to end
 
-- **K3 in full** — `hosts.driver`, `templates.image_ref`, the scheduler filter,
-  poweroff-for-kubernetes in `Service.Stop`, and the `backend` field in the API
-  and SPA. Until then the control plane cannot place a machine on a cluster host
-  or explain why hibernate behaves differently.
 - **K4** — the sshd sidecar, and code-server verified against a real cluster
   (the preview forward already is).
 - **Isolation is still unverified.** kind has no gVisor, so the e2e runs with no

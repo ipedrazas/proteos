@@ -90,6 +90,14 @@ A fleet can mix backends; the control plane sees each one as a host row.
 | Stop | hibernate: RAM snapshot, resume | poweroff: the volume is kept, the machine boots cold |
 | Isolation | the microVM boundary | a sandboxed RuntimeClass (gVisor/Kata) + NetworkPolicy |
 
+Which backend a machine gets is decided at create time and never changes: a host
+row records its agent's driver kind (`hosts.driver`), a template names an image
+for one or both backends (`rootfs_ref` + `kernel_ref` for Firecracker,
+`image_ref` for Kubernetes), and the scheduler only places a machine on a host
+whose backend its template can boot. The machine's `backend` is reported by the
+API, because it decides what the machine can be asked to do — only a microVM
+hibernates into a memory snapshot.
+
 The Kubernetes backend trades the microVM boundary for cluster-native placement,
 storage and scaling. That trade is real and is spelled out in
 [SECURITY.md](../SECURITY.md); operator setup is in

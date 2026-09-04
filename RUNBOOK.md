@@ -147,6 +147,12 @@ Set, at minimum:
 - `PROTEOS_AGENT_TOKEN` — **the same token** you set in Part A3.
 - `GITHUB_APP_CLIENT_ID` / `GITHUB_APP_CLIENT_SECRET` / `PROTEOS_STATE_KEY` (`openssl rand -hex 32`).
 - Keep `PROTEOS_KERNEL_REF` / `PROTEOS_ROOTFS_REF` matching the staged filenames.
+- `PROTEOS_HOST_DRIVER` — the backend the primary host's agent runs:
+  `firecracker` (default), `dev`, or `kubernetes` for an in-cluster
+  cluster-agent. It must match that agent's `PROTEOS_AGENT_DRIVER`; additional
+  hosts carry their own `"driver"` in `PROTEOS_HOSTS`. The control plane reads it
+  to decide which templates may be placed on a host and whether a stop can
+  hibernate — see [`deploy/kubernetes/`](deploy/kubernetes/README.md).
 
 **Machine templates (optional).** With nothing extra set, the control plane offers
 a single "base" machine built from `PROTEOS_ROOTFS_REF`. To offer the full
@@ -166,6 +172,13 @@ The file is mounted read-only at `/etc/proteos/templates.json`. Each template's
 default resources must fit within the `PROTEOS_MAX_*` caps or the control plane
 refuses to start (an empty/placeholder catalog fails loudly with
 `template catalog is empty` — by design, never a machine booting a bogus image).
+
+A template needs `rootfs_ref` (+ `kernel_ref`) to run on a Firecracker host and
+an OCI `image_ref` to run on a Kubernetes one; it may carry both, and is placed
+only on hosts whose backend it can boot. `PROTEOS_IMAGE_REF` supplies the image
+for the synthesized "base" template when no catalog file is set. A host that no
+template can be placed on is warned about at startup and answers
+`503 no_capacity` at create.
 
 ### B3. Build + run
 
