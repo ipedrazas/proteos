@@ -66,6 +66,15 @@ func (d *Driver) Capacity(ctx context.Context) (driver.Capacity, error) {
 	if err != nil {
 		return driver.Capacity{}, fmt.Errorf("list machine pods: %w", err)
 	}
+	// CPU is accumulated in milli and converted ONCE, at the end. Quantity.Value()
+	// rounds a fractional core UP to a whole one, so summing it per container
+	// counted the sshd sidecar's 50m as a full vcpu and reported a 1-vcpu machine
+	// as using 2. Rounding the cluster-wide total to the nearest vcpu instead
+	// keeps a machine's reported usage equal to its declared shape, with the
+	// sidecar's fixed overhead absorbed rather than multiplied by the fleet size.
+	// Memory needs none of this: bytes convert to MiB exactly, so the sidecar's
+	// 64Mi is simply counted, which is what it actually consumes.
+	var usedMilliCPU int64
 	for i := range pods.Items {
 		pod := &pods.Items[i]
 		if terminal(pod.Status.Phase) {
@@ -73,10 +82,11 @@ func (d *Driver) Capacity(ctx context.Context) (driver.Capacity, error) {
 		}
 		for j := range pod.Spec.Containers {
 			req := pod.Spec.Containers[j].Resources.Requests
-			cap.UsedVcpus += int(req.Cpu().Value())
+			usedMilliCPU += req.Cpu().MilliValue()
 			cap.UsedMemMiB += int(req.Memory().Value() / (1024 * 1024))
 		}
 	}
+	cap.UsedVcpus = int((usedMilliCPU + 500) / 1000)
 
 	// Disk: a machine holds its PVC until Destroy, exactly like the firecracker
 	// driver's volume file, so every claim counts — running or not.

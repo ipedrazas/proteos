@@ -134,6 +134,7 @@ func TestEnsureBuildsTheExpectedPod(t *testing.T) {
 		"PROTEOS_GUEST_LISTEN":         "tcp:0.0.0.0:1024",
 		"PROTEOS_GUEST_WEB_LISTEN":     "tcp:0.0.0.0:1025",
 		"PROTEOS_GUEST_PREVIEW_LISTEN": "tcp:0.0.0.0:1026",
+		"PROTEOS_GUEST_SSH_LISTEN":     "tcp:0.0.0.0:1027",
 		"PROTEOS_GUEST_PERSIST":        "/persist",
 		"PROTEOS_GUEST_ENV_DIR":        "/run/proteos/env",
 	} {
@@ -152,6 +153,81 @@ func TestEnsureBuildsTheExpectedPod(t *testing.T) {
 	}
 	if runVol == nil || runVol.EmptyDir == nil || runVol.EmptyDir.Medium != corev1.StorageMediumMemory {
 		t.Error("/run/proteos is not a memory-backed emptyDir; injected secrets would land on disk")
+	}
+}
+
+// K4: inbound SSH is a second container in the pod, not a second process in the
+// guest container — the kubelet is this backend's process supervisor and it
+// supervises containers, not daemons. What makes that work is the network
+// namespace the two share: sshd binds loopback exactly as it does inside a
+// microVM, and the guest agent's forward reaches it there.
+func TestPodRunsSSHDAsASidecar(t *testing.T) {
+	d, cluster := newDriver(t, 0)
+	ctx := context.Background()
+	const id = "aaaaaaaa-0000-4000-8000-00000000000b"
+
+	if _, err := d.EnsureRunning(ctx, spec(id)); err != nil {
+		t.Fatalf("EnsureRunning: %v", err)
+	}
+	pod, err := cluster.CoreV1().Pods(testNamespace).Get(ctx, "m-"+id, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+
+	var sshd *corev1.Container
+	for i := range pod.Spec.Containers {
+		if pod.Spec.Containers[i].Name == "sshd" {
+			sshd = &pod.Spec.Containers[i]
+		}
+	}
+	if sshd == nil {
+		t.Fatalf("no sshd container in the pod (containers: %d)", len(pod.Spec.Containers))
+	}
+	if sshd.Image != testImage {
+		t.Errorf("sshd image = %q, want the guest image %q — sshd and the session user must come from one image", sshd.Image, testImage)
+	}
+	if len(sshd.Command) != 1 || sshd.Command[0] != "/usr/local/bin/proteos-sshd" {
+		t.Errorf("sshd command = %v, want the proteos-sshd entrypoint", sshd.Command)
+	}
+
+	// The persist volume is not optional for this container: the host keys it
+	// generates live there (so a machine keeps its fingerprint across restarts)
+	// and so does the home the injector writes authorized_keys into.
+	var mounted bool
+	for _, m := range sshd.VolumeMounts {
+		if m.Name == "persist" && m.MountPath == "/persist" {
+			mounted = true
+		}
+	}
+	if !mounted {
+		t.Error("sshd does not mount the persist volume; host keys and authorized_keys both live there")
+	}
+
+	// sshd starts as root and drops to the session user, so it keeps a few
+	// capabilities the guest container does not need — but never the whole set.
+	if len(sshd.SecurityContext.Capabilities.Drop) != 1 || sshd.SecurityContext.Capabilities.Drop[0] != "ALL" {
+		t.Errorf("sshd capabilities.drop = %v, want [ALL]", sshd.SecurityContext.Capabilities.Drop)
+	}
+	added := map[corev1.Capability]bool{}
+	for _, c := range sshd.SecurityContext.Capabilities.Add {
+		added[c] = true
+	}
+	if !added["SETUID"] || !added["SETGID"] || !added["SYS_CHROOT"] {
+		t.Errorf("sshd capabilities.add = %v; it cannot drop to the session user or privilege-separate without these",
+			sshd.SecurityContext.Capabilities.Add)
+	}
+	if sshd.SecurityContext.Privileged != nil && *sshd.SecurityContext.Privileged {
+		t.Error("sshd container is privileged")
+	}
+
+	// Port 22 is deliberately NOT declared on the pod: sshd binds the pod's
+	// loopback, and the only route in is the guest agent's forward on 1027.
+	for _, c := range pod.Spec.Containers {
+		for _, p := range c.Ports {
+			if p.ContainerPort == 22 {
+				t.Error("port 22 is declared on the pod; sshd is reachable only through the guest tunnel")
+			}
+		}
 	}
 }
 
@@ -537,8 +613,11 @@ func TestCapacityCountsSchedulableNodesOnly(t *testing.T) {
 	if cap.TotalMemMiB != 32768 {
 		t.Errorf("total mem = %d MiB, want 32768", cap.TotalMemMiB)
 	}
-	if cap.UsedVcpus != 2 || cap.UsedMemMiB != 2048 {
-		t.Errorf("used = %d vcpus / %d MiB, want 2 / 2048", cap.UsedVcpus, cap.UsedMemMiB)
+	// The machine's declared 2 vcpus, plus the sshd sidecar's 64Mi. The sidecar's
+	// 50m of CPU is absorbed by rounding the cluster total to the nearest vcpu —
+	// counting it per container would report this machine as using 3.
+	if cap.UsedVcpus != 2 || cap.UsedMemMiB != 2048+64 {
+		t.Errorf("used = %d vcpus / %d MiB, want 2 / %d", cap.UsedVcpus, cap.UsedMemMiB, 2048+64)
 	}
 	if cap.UsedDiskMiB != 20480 {
 		t.Errorf("used disk = %d MiB, want 20480 (the machine's PVC)", cap.UsedDiskMiB)

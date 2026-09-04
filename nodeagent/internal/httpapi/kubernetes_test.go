@@ -195,7 +195,10 @@ func TestKubernetesCapacityOverTheWire(t *testing.T) {
 	if cap.TotalVcpus != 8 || cap.TotalMemMiB != 16384 {
 		t.Errorf("cluster total = %d vcpus / %d MiB, want 8 / 16384", cap.TotalVcpus, cap.TotalMemMiB)
 	}
-	if cap.UsedVcpus != 2 || cap.UsedMemMiB != 2048 {
-		t.Errorf("used = %d vcpus / %d MiB, want the one machine's 2 / 2048", cap.UsedVcpus, cap.UsedMemMiB)
+	// The machine's own 2 vcpus / 2048 MiB, plus the 64 MiB its sshd sidecar
+	// requests (K4). The sidecar's CPU is absorbed by the cluster-wide rounding
+	// to whole vcpus, which is what keeps a 1-vcpu machine from reporting 2.
+	if cap.UsedVcpus != 2 || cap.UsedMemMiB != 2048+64 {
+		t.Errorf("used = %d vcpus / %d MiB, want the one machine's 2 / %d", cap.UsedVcpus, cap.UsedMemMiB, 2048+64)
 	}
 }

@@ -403,6 +403,168 @@ func TestKindPreviewForward(t *testing.T) {
 	}
 }
 
+// TestKindSSH proves the K4 sshd sidecar end to end: that sshd is running beside
+// the guest, that the guest agent's forward reaches it over the pod's loopback,
+// that a key placed where the control plane's injector puts it actually
+// authenticates, and that the machine keeps its host identity across a restart.
+//
+// The three-way home alignment is the subtle part and is asserted directly.
+// sshd reads $HOME and AuthorizedKeysFile from the passwd entry; the guest agent
+// starts sessions in the PERSISTED home and the injector writes there. If those
+// drift apart, ssh authenticates against a file nothing ever writes — and every
+// other assertion in this test would still pass.
+func TestKindSSH(t *testing.T) {
+	a := newAgent(t)
+	const id = "e2e0kind-0000-4000-8000-000000000005"
+	a.cleanup(t, id)
+
+	a.ensure(t, id)
+	a.waitState(t, id, api.StateRunning, bootTimeout)
+
+	// 1. sshd answers through the tunnel. The forward is the only route in:
+	// sshd binds the pod's loopback, which nothing outside the pod can address.
+	conn := a.dialGuest(t, id, api.GuestSSHPort)
+	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+	banner := make([]byte, 64)
+	n, err := conn.Read(banner)
+	conn.Close()
+	if err != nil && n == 0 {
+		t.Fatalf("read ssh banner through the tunnel: %v", err)
+	}
+	if !strings.HasPrefix(string(banner[:n]), "SSH-2.0-") {
+		t.Fatalf("guest port %d is not sshd; got %q", api.GuestSSHPort, string(banner[:n]))
+	}
+
+	ws, tunnel := a.terminal(t, id, "ssh")
+	defer tunnel.Close()
+	defer ws.Close()
+
+	// 2. The homes agree, and they are on the volume.
+	out := runInGuest(t, ws,
+		`echo "home=$HOME passwd=$(getent passwd dev | cut -d: -f6)"; `+echoMarker("HOME-CHECK"),
+		"HOME-CHECK", 60*time.Second)
+	if !strings.Contains(out, "home=/persist/home passwd=/persist/home") {
+		t.Fatalf("the session home and the passwd home disagree, so sshd would read authorized_keys "+
+			"from a directory nothing writes: %q", tail(out))
+	}
+
+	// 3. A key where the injector puts it authenticates. Generated in-guest so
+	// the private half never leaves the machine, and used from the guest
+	// container against the sidecar's loopback sshd — the same daemon the
+	// tunnel reached above.
+	runInGuest(t, ws,
+		`ssh-keygen -q -t ed25519 -f /tmp/e2e_key -N "" && mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh" && `+
+			`cat /tmp/e2e_key.pub > "$HOME/.ssh/authorized_keys" && chmod 600 "$HOME/.ssh/authorized_keys" && `+
+			echoMarker("KEY-INSTALLED"),
+		"KEY-INSTALLED", 60*time.Second)
+
+	out = runInGuest(t, ws,
+		`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes `+
+			`-i /tmp/e2e_key dev@127.0.0.1 "id -un; pwd" >/tmp/ssh.out 2>/tmp/ssh.err; echo "rc=$?"; `+
+			`cat /tmp/ssh.out /tmp/ssh.err; `+echoMarker("SSH-DONE"),
+		"SSH-DONE", 90*time.Second)
+	if !strings.Contains(out, "rc=0") {
+		t.Fatalf("ssh login failed: %q", tail(out))
+	}
+	// The session lands as the unprivileged user, in the home that survives.
+	if !strings.Contains(out, "dev") || !strings.Contains(out, "/persist/home") {
+		t.Errorf("ssh session is not the `dev` user in the persisted home: %q", tail(out))
+	}
+
+	// 4. The host identity is the machine's, not the image's. Take the
+	// fingerprint, restart, and take it again: an image-baked key would make
+	// every machine identical, and an ephemeral one would change here and greet
+	// the user with a host-key warning on every boot.
+	out = runInGuest(t, ws,
+		`ssh-keygen -lf /persist/ssh_host_keys/ssh_host_ed25519_key.pub | awk '{print "FP:" $2}'; `+echoMarker("FP-1"),
+		"FP-1", 60*time.Second)
+	before := fingerprint(t, out)
+	ws.Close()
+	tunnel.Close()
+
+	resp := a.do(t, http.MethodPost, "/v1/machines/"+id+"/stop", api.StopRequest{Mode: api.StopModePoweroff})
+	resp.Body.Close()
+	a.waitState(t, id, api.StateStopped, 2*time.Minute)
+	a.ensure(t, id)
+	a.waitState(t, id, api.StateRunning, bootTimeout)
+
+	ws2, tunnel2 := a.terminal(t, id, "ssh-after-restart")
+	defer tunnel2.Close()
+	defer ws2.Close()
+	out = runInGuest(t, ws2,
+		`ssh-keygen -lf /persist/ssh_host_keys/ssh_host_ed25519_key.pub | awk '{print "FP:" $2}'; `+echoMarker("FP-2"),
+		"FP-2", 60*time.Second)
+	if after := fingerprint(t, out); after != before {
+		t.Errorf("host key changed across a restart (%s -> %s); every reconnect would warn the user", before, after)
+	}
+}
+
+// fingerprint pulls the FP: line runInGuest's output carries. It fails the test
+// rather than returning an empty string, so a mis-parsed line cannot make the
+// before/after comparison trivially pass.
+func fingerprint(t *testing.T, out string) string {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if i := strings.Index(line, "FP:"); i >= 0 {
+			fp := strings.TrimSpace(line[i+len("FP:"):])
+			if len(fp) > 10 {
+				return fp
+			}
+		}
+	}
+	t.Fatalf("no host key fingerprint in guest output: %q", tail(out))
+	return ""
+}
+
+// TestKindCodeServer proves the web forward against a real pod: the guest agent
+// starts code-server lazily on the first connection to the web port, and the
+// tunnel carries plain HTTP to it. Nothing here is Kubernetes-specific except
+// the thing that has never been tested on this backend — that a lazily-started,
+// heavyweight child process inside a machine POD is reachable the same way it is
+// inside a microVM.
+func TestKindCodeServer(t *testing.T) {
+	a := newAgent(t)
+	const id = "e2e0kind-0000-4000-8000-000000000006"
+	a.cleanup(t, id)
+
+	a.ensure(t, id)
+	a.waitState(t, id, api.StateRunning, bootTimeout)
+
+	// code-server is started on demand and takes a while the first time (it
+	// unpacks its own extensions), so this retries rather than assuming the
+	// first connection is answered.
+	deadline := time.Now().Add(3 * time.Minute)
+	var last string
+	for time.Now().Before(deadline) {
+		status, body := httpOverTunnel(t, a, id, api.GuestWebPort)
+		last = status + " " + body
+		// 302 to /login is what an unauthenticated code-server answers with;
+		// 200 is what it serves when auth is off. Either proves it is there.
+		if strings.Contains(status, " 200") || strings.Contains(status, " 302") {
+			return
+		}
+		time.Sleep(5 * time.Second)
+	}
+	t.Fatalf("code-server never answered through the web forward; last response: %q", tail(last))
+}
+
+// httpOverTunnel sends one HTTP/1.0 request to a guest port and returns the
+// status line and body. HTTP/1.0 so the guest closes the connection and the read
+// terminates without parsing content-length.
+func httpOverTunnel(t *testing.T, a *agent, id string, port uint32) (string, string) {
+	t.Helper()
+	conn := a.dialGuest(t, id, port)
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+	if _, err := conn.Write([]byte("GET / HTTP/1.0\r\nHost: guest\r\n\r\n")); err != nil {
+		return "", ""
+	}
+	raw, _ := io.ReadAll(conn)
+	text := string(raw)
+	status, body, _ := strings.Cut(text, "\r\n")
+	return status, body
+}
+
 // TestKindCapacity checks the synthesized cluster capacity is derived from the
 // real node list rather than a configured constant, and that a running machine
 // shows up as used.

@@ -78,11 +78,26 @@ const (
 // Container and volume names inside a machine pod.
 const (
 	guestContainer = "guest"
+	sshdContainer  = "sshd"
 	persistVolume  = "persist"
 	runVolume      = "run-proteos"
 
 	persistMountPath = "/persist"
 	runMountPath     = "/run/proteos"
+)
+
+// sshdCommand is the sshd sidecar's entrypoint, baked into the guest image
+// (image/proteos-sshd.sh). It generates the machine's host keys on the persist
+// volume if they are missing, then execs sshd in the foreground.
+var sshdCommand = []string{"/usr/local/bin/proteos-sshd"}
+
+// The sshd sidecar's resource shape. Fixed and small: sshd is a listener, not a
+// workload, and its cost should not scale with the machine's vcpus. Request
+// equals limit so adding it does not drop a machine out of Guaranteed QoS, which
+// is what request == limit on the guest container was chosen for.
+const (
+	sshdCPUMilli  = 50
+	sshdMemoryMiB = 64
 )
 
 // stopGracePeriod is how long the kubelet gives the guest-agent to shut down
