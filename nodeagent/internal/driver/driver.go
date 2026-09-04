@@ -13,6 +13,13 @@ import (
 // no record of. The HTTP layer maps it to 404 unknown_machine.
 var ErrUnknownMachine = errors.New("driver: unknown machine")
 
+// ErrBadSpec is returned by EnsureRunning when a backend cannot honour the spec
+// at all, however many times it is retried — a kubernetes host asked to boot a
+// template that carries only a Firecracker kernel_ref/rootfs_ref, say. The HTTP
+// layer maps it to 400 bad_request rather than 500, so an operator can tell
+// "this host will never run this machine" apart from "something broke".
+var ErrBadSpec = errors.New("driver: unsupported machine spec")
+
 // VMSpec is the desired shape of a microVM. Net is filled by the driver/agent
 // (it owns IP/tap allocation), so EnsureRunning ignores any Net the caller
 // passes.
@@ -22,7 +29,14 @@ type VMSpec struct {
 	MemMiB    int
 	KernelRef string
 	RootfsRef string
-	Disks     []Disk // Phase 4: the persistent disk(s) to attach (single entry today)
+
+	// ImageRef is the OCI image a container-backed driver runs the machine
+	// from. It is the Kubernetes backend's analogue of KernelRef+RootfsRef,
+	// which are Firecracker-shaped and meaningless for a pod. Empty on a
+	// firecracker/dev host, which ignores it.
+	ImageRef string
+
+	Disks []Disk // Phase 4: the persistent disk(s) to attach (single entry today)
 
 	// VolumeKey is the 32-byte LUKS key for the machine volume (Phase 4
 	// decision #2), delivered fresh on every ensure and held only in memory for

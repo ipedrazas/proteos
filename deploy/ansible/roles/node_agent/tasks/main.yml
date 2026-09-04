@@ -14,10 +14,11 @@
       --extra-vars "proteos_agent_token=$(openssl rand -hex 32)" or via ansible-vault.
 
 # ----------------------------------------------------------------------------
-# Source: rsync this checkout (default) or clone from git. The node-agent is a
-# self-contained Go module (GOWORK=off, no external deps), so only nodeagent/ and
-# deploy/node-agent/ are strictly needed — we sync the repo and let the build
-# isolate the module.
+# Source: rsync this checkout (default) or clone from git. The node-agent builds
+# as a standalone module (GOWORK=off) against its own go.mod/go.sum — which now
+# include client-go for the kubernetes driver, so the build host needs network
+# for the module download — and only nodeagent/ and deploy/node-agent/ are
+# strictly needed. We sync the repo and let the build isolate the module.
 # ----------------------------------------------------------------------------
 - name: Sync node-agent source from local checkout
   when: proteos_src_git_repo | length == 0

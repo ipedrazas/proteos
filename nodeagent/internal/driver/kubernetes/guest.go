@@ -1,0 +1,64 @@
+package kubernetes
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"strconv"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	api "github.com/tavon-ai/proteos/nodeagent/api"
+	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
+)
+
+// DialGuest opens a byte stream to the machine's in-guest agent by dialing the
+// pod IP directly. The cluster-agent runs inside the cluster, so pod-to-pod
+// routing is all this needs — no SPDY port-forward through the API server, and
+// no extra hop in the terminal's latency path. The returned conn is spliced 1:1
+// to the control-plane gateway by the node-agent's HTTP layer, which never
+// parses what flows through it.
+//
+// Preview application ports keep the guest-agent's protocol contract: connect to
+// GuestPreviewPort and write the target loopback port as a one-line preamble.
+// That preamble is a guest-agent contract, not a vsock artefact, so it is
+// identical on this backend.
+func (d *Driver) DialGuest(ctx context.Context, machineID string, port uint32) (net.Conn, error) {
+	pod, err := d.client.CoreV1().Pods(d.cfg.Namespace).
+		Get(ctx, resourceName(machineID), metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, driver.ErrUnknownMachine
+		}
+		return nil, fmt.Errorf("get pod %s: %w", resourceName(machineID), err)
+	}
+	if pod.Status.PodIP == "" {
+		return nil, fmt.Errorf("machine %s has no pod IP yet", machineID)
+	}
+	if !guestReady(pod) {
+		return nil, fmt.Errorf("machine %s: guest agent is not ready", machineID)
+	}
+
+	if port == 0 {
+		port = api.GuestTerminalPort
+	}
+	target, preamble := port, ""
+	if !api.IsSystemGuestPort(port) {
+		target, preamble = api.GuestPreviewPort, api.PreviewPreamble(port)
+	}
+
+	addr := net.JoinHostPort(pod.Status.PodIP, strconv.FormatUint(uint64(target), 10))
+	dialer := net.Dialer{Timeout: d.cfg.DialTimeout}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("dial guest %s: %w", addr, err)
+	}
+	if preamble != "" {
+		if _, err := conn.Write([]byte(preamble)); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("write preview preamble: %w", err)
+		}
+	}
+	return conn, nil
+}

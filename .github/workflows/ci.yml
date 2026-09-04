@@ -78,10 +78,12 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: nodeagent/go.mod
-          # The node-agent has no external deps (no go.sum); key the module
-          # cache off the workspace sum so setup-go doesn't error on a missing
-          # nodeagent/go.sum.
-          cache-dependency-path: go.work.sum
+          # Key the module cache off BOTH sum files: the node-agent carries its
+          # own dependencies now (prometheus, and client-go for the kubernetes
+          # driver), and the workspace sum alone would miss a change to them.
+          cache-dependency-path: |
+            go.work.sum
+            nodeagent/go.sum
 
       # The node-agent module builds and tests with no Postgres and no KVM: the
       # dev driver is the default, and the firecracker driver is behind a build

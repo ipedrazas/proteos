@@ -21,6 +21,7 @@ import (
 	"github.com/tavon-ai/proteos/nodeagent/internal/config"
 	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
 	"github.com/tavon-ai/proteos/nodeagent/internal/driver/dev"
+	k8sdriver "github.com/tavon-ai/proteos/nodeagent/internal/driver/kubernetes"
 	"github.com/tavon-ai/proteos/nodeagent/internal/httpapi"
 	"github.com/tavon-ai/proteos/nodeagent/internal/metrics"
 	"github.com/tavon-ai/proteos/nodeagent/internal/state"
@@ -49,6 +50,16 @@ func run() error {
 	drv, err := buildDriver(cfg, store)
 	if err != nil {
 		return err
+	}
+
+	// Drivers that can check their environment do so before we serve: a missing
+	// namespace, an under-powered RBAC Role or an uninstalled RuntimeClass is
+	// far cheaper to diagnose at startup than as a per-machine failure later.
+	type preflighter interface{ Preflight(context.Context) error }
+	if p, ok := drv.(preflighter); ok {
+		if err := p.Preflight(context.Background()); err != nil {
+			return err
+		}
 	}
 
 	// Re-attach to (or reap) machines that survived/died across an agent
@@ -112,6 +123,8 @@ func run() error {
 // buildDriver selects the driver implementation from config. The firecracker
 // driver is linux-only and lives behind a build tag; on platforms/builds where
 // it is absent, requesting it is a startup error rather than a silent fallback.
+// The kubernetes driver needs no build tag — client-go is cross-platform — so a
+// default build still compiles it everywhere.
 func buildDriver(cfg *config.Config, store *state.Store) (driver.Driver, error) {
 	switch cfg.Driver {
 	case "dev":
@@ -119,6 +132,26 @@ func buildDriver(cfg *config.Config, store *state.Store) (driver.Driver, error) 
 			WithCapacity(cfg.CapacityVcpus, cfg.CapacityMemMiB, cfg.CapacityDiskMiB), nil
 	case "firecracker":
 		return newFirecrackerDriver(cfg, store)
+	case "kubernetes":
+		// No state.Store: the API server is this driver's record, so it keeps
+		// nothing on the cluster-agent's own disk. Machine pods survive an agent
+		// restart and are found again by label, not by a state.json.
+		client, err := k8sdriver.NewClient(cfg.K8sKubeconfig)
+		if err != nil {
+			return nil, err
+		}
+		return k8sdriver.New(client, k8sdriver.Config{
+			Namespace:       cfg.K8sNamespace,
+			AgentNamespace:  cfg.K8sAgentNamespace,
+			AgentPodLabels:  cfg.K8sAgentPodLabels,
+			StorageClass:    cfg.K8sStorageClass,
+			RuntimeClass:    cfg.K8sRuntimeClass,
+			ImagePullSecret: cfg.K8sImagePullSecret,
+			NodeSelector:    cfg.K8sNodeSelector,
+			ClusterCIDRs:    cfg.K8sClusterCIDRs,
+			DNSNamespace:    cfg.K8sDNSNamespace,
+			DefaultImage:    cfg.K8sDefaultImage,
+		}), nil
 	default:
 		return nil, errors.New("unknown PROTEOS_AGENT_DRIVER: " + cfg.Driver)
 	}

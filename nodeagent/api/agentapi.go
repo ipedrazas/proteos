@@ -177,10 +177,19 @@ type NetworkPolicyConfig struct {
 // ensure (the only call that needs it, for luksOpen), held in agent memory, and
 // MUST NEVER be logged or persisted host-side — the request logger redacts it.
 type EnsureRequest struct {
-	Vcpus         int                  `json:"vcpus"`
-	MemMiB        int                  `json:"mem_mib"`
-	KernelRef     string               `json:"kernel_ref"`
-	RootfsRef     string               `json:"rootfs_ref"`
+	Vcpus     int    `json:"vcpus"`
+	MemMiB    int    `json:"mem_mib"`
+	KernelRef string `json:"kernel_ref"`
+	RootfsRef string `json:"rootfs_ref"`
+
+	// ImageRef is the OCI image the kubernetes driver runs the machine from
+	// (e.g. ghcr.io/tavon-ai/proteos-guest:base-1.2.3). It is the Kubernetes
+	// backend's analogue of KernelRef+RootfsRef, which are Firecracker-shaped
+	// (a kernel to boot and an ext4 to attach) and have no meaning for a pod.
+	// Additive and omitempty, so a control plane that predates the Kubernetes
+	// backend keeps producing valid requests; a firecracker host ignores it.
+	ImageRef string `json:"image_ref,omitempty"`
+
 	DiskID        string               `json:"disk_id,omitempty"`
 	DiskMiB       int                  `json:"disk_mib,omitempty"`
 	VolumeKeyB64  string               `json:"volume_key_b64,omitempty"`

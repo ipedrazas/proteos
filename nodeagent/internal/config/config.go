@@ -4,6 +4,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/netip"
@@ -128,6 +129,62 @@ type Config struct {
 	CapacityMemMiB  int
 	CapacityDiskMiB int
 
+	// --- kubernetes driver (K1); unused by the dev/firecracker drivers -------
+
+	// K8sNamespace (PROTEOS_K8S_NAMESPACE) is where machine pods, PVCs and
+	// NetworkPolicies live. The cluster-agent's Role is scoped to it.
+	K8sNamespace string
+
+	// K8sAgentNamespace (PROTEOS_K8S_AGENT_NAMESPACE) is the namespace the
+	// cluster-agent itself runs in — the ingress peer in every machine's
+	// NetworkPolicy. Defaults to K8sNamespace. In-cluster it is read from the
+	// downward API by the manifests, not guessed.
+	K8sAgentNamespace string
+
+	// K8sKubeconfig (PROTEOS_K8S_KUBECONFIG) selects an out-of-cluster client.
+	// Empty ⇒ in-cluster (the production shape).
+	K8sKubeconfig string
+
+	// K8sStorageClass (PROTEOS_K8S_STORAGE_CLASS) backs machine volumes. Empty
+	// ⇒ the cluster default. Because this backend cannot use the per-machine
+	// LUKS volume key, an ENCRYPTED storage class is how encryption at rest is
+	// restored — see SECURITY.md.
+	K8sStorageClass string
+
+	// K8sRuntimeClass (PROTEOS_K8S_RUNTIME_CLASS) is the sandboxed runtime
+	// machine pods use; default "gvisor". Setting it to the EMPTY STRING (the
+	// variable present but empty) is the explicit downgrade to the node's
+	// default runtime — a shared kernel — and the driver says so loudly at
+	// startup. Unsetting the variable keeps the safe default.
+	K8sRuntimeClass string
+
+	// K8sImagePullSecret (PROTEOS_K8S_IMAGE_PULL_SECRET) is attached to machine
+	// pods pulling from a private registry.
+	K8sImagePullSecret string
+
+	// K8sNodeSelector (PROTEOS_K8S_NODE_SELECTOR, JSON object) pins machine pods
+	// to a dedicated node pool, and bounds the nodes Capacity sums over.
+	K8sNodeSelector map[string]string
+
+	// K8sAgentPodLabels (PROTEOS_K8S_AGENT_POD_LABELS, JSON object) selects the
+	// cluster-agent pod. It is the ONLY permitted ingress peer on the guest
+	// ports, so without it machines are created unreachable (fail closed).
+	K8sAgentPodLabels map[string]string
+
+	// K8sClusterCIDRs (PROTEOS_K8S_CLUSTER_CIDRS, comma-separated) are the pod
+	// and service networks machine egress must never reach, on top of the
+	// built-in RFC1918/link-local/loopback deny list.
+	K8sClusterCIDRs []string
+
+	// K8sDNSNamespace (PROTEOS_K8S_DNS_NAMESPACE) holds the cluster DNS service;
+	// machine egress always permits port 53 to it. Default kube-system.
+	K8sDNSNamespace string
+
+	// K8sDefaultImage (PROTEOS_K8S_DEFAULT_IMAGE) is the guest image used when
+	// an EnsureRequest carries no image_ref. It exists for the tracer bullet,
+	// before K3 teaches the control plane to send one.
+	K8sDefaultImage string
+
 	// MgmtIfaces (PROTEOS_AGENT_MGMT_IFACES, comma-separated) are the host
 	// interfaces allowed to reach SSH and the agent API through the firecracker
 	// driver's fail-closed nftables input chain. The token "egress" resolves to
@@ -165,7 +222,30 @@ func Load() (*Config, error) {
 		CapacityVcpus:      getenvInt("PROTEOS_AGENT_CAPACITY_VCPUS", runtime.NumCPU()),
 		CapacityMemMiB:     getenvInt("PROTEOS_AGENT_CAPACITY_MEM_MIB", 8192),
 		CapacityDiskMiB:    getenvInt("PROTEOS_AGENT_CAPACITY_DISK_MIB", 102400),
+		K8sNamespace:       getenv("PROTEOS_K8S_NAMESPACE", "proteos-machines"),
+		K8sAgentNamespace:  os.Getenv("PROTEOS_K8S_AGENT_NAMESPACE"),
+		K8sKubeconfig:      os.Getenv("PROTEOS_K8S_KUBECONFIG"),
+		K8sStorageClass:    os.Getenv("PROTEOS_K8S_STORAGE_CLASS"),
+		// LookupEnv, not getenv: an explicitly EMPTY value is meaningful here —
+		// it is the operator opting out of the sandboxed runtime.
+		K8sRuntimeClass:    lookupenv("PROTEOS_K8S_RUNTIME_CLASS", "gvisor"),
+		K8sImagePullSecret: os.Getenv("PROTEOS_K8S_IMAGE_PULL_SECRET"),
+		K8sClusterCIDRs:    splitCSV(os.Getenv("PROTEOS_K8S_CLUSTER_CIDRS")),
+		K8sDNSNamespace:    getenv("PROTEOS_K8S_DNS_NAMESPACE", "kube-system"),
+		K8sDefaultImage:    os.Getenv("PROTEOS_K8S_DEFAULT_IMAGE"),
 	}
+
+	nodeSelector, err := getenvJSONMap("PROTEOS_K8S_NODE_SELECTOR")
+	if err != nil {
+		return nil, err
+	}
+	c.K8sNodeSelector = nodeSelector
+
+	agentLabels, err := getenvJSONMap("PROTEOS_K8S_AGENT_POD_LABELS")
+	if err != nil {
+		return nil, err
+	}
+	c.K8sAgentPodLabels = agentLabels
 
 	if (c.TLSCert == "") != (c.TLSKey == "") {
 		return nil, fmt.Errorf("PROTEOS_AGENT_TLS_CERT and PROTEOS_AGENT_TLS_KEY must be set together")
@@ -227,6 +307,32 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// lookupenv is getenv's "an empty value is a real value" sibling: it returns def
+// only when the variable is ABSENT, so an operator can express "none" by setting
+// it to the empty string.
+func lookupenv(key, def string) string {
+	if v, ok := os.LookupEnv(key); ok {
+		return v
+	}
+	return def
+}
+
+// getenvJSONMap parses a JSON object of string→string (Kubernetes label sets).
+// Absent or empty ⇒ nil, no error; malformed ⇒ a startup error, because a
+// silently-ignored node selector or agent pod selector would place machines on
+// the wrong nodes or leave them unreachable.
+func getenvJSONMap(key string) (map[string]string, error) {
+	raw := os.Getenv(key)
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var m map[string]string
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return nil, fmt.Errorf("%s must be a JSON object of string labels: %w", key, err)
+	}
+	return m, nil
 }
 
 func getenv(key, def string) string {
