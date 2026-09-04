@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/tavon-ai/proteos/controlplane/internal/auth"
 	"github.com/tavon-ai/proteos/controlplane/internal/httpapi"
 	"github.com/tavon-ai/proteos/controlplane/internal/machine"
@@ -20,6 +22,7 @@ import (
 
 // machFixture holds a wired test server and the IDs/credentials of the seeded data.
 type machFixture struct {
+	pool  *pgxpool.Pool
 	url   string
 	token string // session cookie value
 	mid   string // canonical UUID of the seeded machine
@@ -70,11 +73,15 @@ func setupMach(t *testing.T, state string) machFixture {
 	srv := &httpapi.Server{
 		Sessions: sessions,
 		Queries:  q,
-		Machines: machine.NewService(pool, stubNodeClient{}, machine.NewBroker(), sec, machine.Spec{}),
+		// The refs matter even with no template catalog: a machine is placed only
+		// on a host whose backend the spec names an image for (K3), and this
+		// fixture's host is the default firecracker kind.
+		Machines: machine.NewService(pool, stubNodeClient{}, machine.NewBroker(), sec,
+			machine.Spec{KernelRef: "k", RootfsRef: "r"}),
 	}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
-	return machFixture{url: ts.URL, token: token, mid: mid}
+	return machFixture{pool: pool, url: ts.URL, token: token, mid: mid}
 }
 
 // setupMachMulti is like setupMach but also creates a second machine (stopped).
@@ -595,5 +602,54 @@ func TestCreateUpToLimit_RequiresAuth(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+// K3: the API tells the browser which backend a machine runs on, because the
+// difference is not visible in any of the machine's own fields — a Kubernetes
+// machine can never hibernate and never has a snapshot, and the SPA has to stop
+// offering both.
+func TestMachineSummaryReportsBackend(t *testing.T) {
+	t.Parallel()
+	fx := setupMach(t, string(machine.StateRunning))
+
+	get := func() httpapi.MachineSummary {
+		t.Helper()
+		resp := fx.doMach(t, http.MethodGet, "/api/machines/"+fx.mid, "", true, false)
+		defer resp.Body.Close()
+		var out httpapi.MachineSummary
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return out
+	}
+	list := func() []httpapi.MachineSummary {
+		t.Helper()
+		resp := fx.doMach(t, http.MethodGet, "/api/machines", "", true, false)
+		defer resp.Body.Close()
+		var out []httpapi.MachineSummary
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return out
+	}
+
+	if got := get().Backend; got != "firecracker" {
+		t.Fatalf("backend = %q, want firecracker (the seeded host's default kind)", got)
+	}
+	if got := list(); len(got) != 1 || got[0].Backend != "firecracker" {
+		t.Fatalf("list backend = %+v", got)
+	}
+
+	// Convert the host; the same machine now reports the other backend, on both
+	// the single read and the batched list (which resolves drivers differently).
+	if _, err := fx.pool.Exec(context.Background(), "UPDATE hosts SET driver='kubernetes'"); err != nil {
+		t.Fatalf("convert host: %v", err)
+	}
+	if got := get().Backend; got != "kubernetes" {
+		t.Fatalf("backend = %q, want kubernetes", got)
+	}
+	if got := list(); len(got) != 1 || got[0].Backend != "kubernetes" {
+		t.Fatalf("list backend = %+v", got)
 	}
 }

@@ -247,6 +247,7 @@ func run(migrate, migrateOnly bool, logStore *applog.Store) error {
 	if _, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{
 		Name:     cfg.HostName,
 		AgentUrl: cfg.NodeAgentURL,
+		Driver:   cfg.HostDriver,
 	}); err != nil {
 		return err
 	}
@@ -254,6 +255,7 @@ func run(migrate, migrateOnly bool, logStore *applog.Store) error {
 		if _, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{
 			Name:     h.Name,
 			AgentUrl: h.URL,
+			Driver:   h.Driver,
 		}); err != nil {
 			return fmt.Errorf("seed host %q: %w", h.Name, err)
 		}
@@ -284,7 +286,7 @@ func run(migrate, migrateOnly bool, logStore *applog.Store) error {
 	if cfg.TemplatesFile != "" {
 		catalog, err = machine.LoadCatalogFile(cfg.TemplatesFile, cfg.KernelRef)
 	} else {
-		catalog, err = machine.SingleTemplateCatalog(cfg.RootfsRef, cfg.KernelRef, defaults)
+		catalog, err = machine.SingleTemplateCatalog(cfg.RootfsRef, cfg.KernelRef, cfg.ImageRef, defaults)
 	}
 	if err != nil {
 		return fmt.Errorf("machine templates: %w", err)
@@ -302,6 +304,23 @@ func run(migrate, migrateOnly bool, logStore *applog.Store) error {
 		tmplSource = cfg.TemplatesFile
 	}
 	slog.Info("machine templates loaded", "count", len(catalog.Templates()), "source", tmplSource)
+	// K3: a configured host that no template can boot is a misconfiguration —
+	// most likely a kubernetes host in a catalog that only names ext4 rootfs
+	// images. Say so at startup; otherwise it surfaces only as a 503 no_capacity
+	// the first time a user tries to create a machine there.
+	for _, h := range append([]config.HostConfig{{Name: cfg.HostName, Driver: cfg.HostDriver}}, cfg.AdditionalHosts...) {
+		usable := 0
+		for _, t := range catalog.Templates() {
+			if t.SupportsDriver(h.Driver) {
+				usable++
+			}
+		}
+		if usable == 0 {
+			slog.Warn("no template can be placed on this host: it will never be scheduled",
+				"host", h.Name, "driver", h.Driver, "templates", len(catalog.Templates()),
+				"hint", "a kubernetes host needs templates with image_ref (or PROTEOS_IMAGE_REF)")
+		}
+	}
 
 	machineSvc := machine.NewService(pool, nodes, broker, sec, machine.Spec{
 		Vcpus:            cfg.MachineVcpus,
@@ -309,6 +328,7 @@ func run(migrate, migrateOnly bool, logStore *applog.Store) error {
 		DiskMiB:          cfg.MachineDiskMiB,
 		KernelRef:        cfg.KernelRef,
 		RootfsRef:        cfg.RootfsRef,
+		ImageRef:         cfg.ImageRef,
 		MaxPerUser:       cfg.MachineMaxPerUser,
 		Catalog:          catalog,
 		Limits:           limits,

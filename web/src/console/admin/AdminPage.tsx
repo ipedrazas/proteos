@@ -144,6 +144,10 @@ export function AdminPage() {
                   </td>
                   <td className="c-nowrap">
                     {m.host ?? <span className="c-muted">unscheduled</span>}
+                    {/* K3: a fleet can mix backends, and which one a machine is
+                        on explains what it can be asked to do (a pod cannot
+                        hibernate). The host name alone does not say. */}
+                    {m.backend && <span className="c-muted"> · {m.backend}</span>}
                   </td>
                   <td className="c-nowrap" title={m.created_at}>
                     {formatAge(Date.now() - Date.parse(m.created_at))}

@@ -112,12 +112,39 @@ terminates TLS itself. Then add it to `PROTEOS_HOSTS`:
 [{"name": "k8s-eu", "url": "https://cluster-agent.example.com/", "driver": "kubernetes"}]
 ```
 
+`driver` is what tells the control plane this host boots OCI images and cannot
+hibernate; it must match the agent's own `PROTEOS_AGENT_DRIVER`. If the cluster
+is the control plane's *only* host, set `PROTEOS_HOST_DRIVER=kubernetes` for the
+primary host row instead.
+
+## Giving it something to boot
+
+A machine is only placed on a host whose backend its template can boot, so a
+cluster host needs templates carrying an OCI `image_ref`:
+
+```json
+{"templates": [
+  {"id": "base", "label": "Base", "image_ref": "ghcr.io/tavon-ai/proteos-guest:base-1.2.3",
+   "defaults": {"vcpus": 2, "mem_mib": 2048, "disk_mib": 10240}}
+]}
+```
+
+A template may carry both `image_ref` and `rootfs_ref`/`kernel_ref`, in which
+case it runs on either backend and the agent uses the ref it can. Without
+`PROTEOS_TEMPLATES_FILE`, the synthesized "base" template takes its image from
+`PROTEOS_IMAGE_REF`.
+
+The control plane logs a warning at startup for any host no template can be
+placed on, and `POST /api/machines` answers `503 no_capacity` naming the
+backends the template needs. Neither is a cluster fault — both mean the catalog
+and the fleet disagree.
+
 ## Known differences from a Firecracker host
 
 | | Firecracker | Kubernetes |
 | --- | --- | --- |
 | Isolation | microVM (own kernel) | sandboxed runtime, or the node's kernel |
-| Hibernate | RAM snapshot, resume | poweroff; the volume is kept, the machine boots cold |
+| Hibernate | RAM snapshot, resume | poweroff; the volume is kept, the machine boots cold. Stop moves the machine through `stopping`, not `hibernating`, and the console hides the snapshot field |
 | Encryption at rest | per-machine LUKS key | StorageClass |
 | Egress policy | nftables on the tap | NetworkPolicy, IP snapshot (no live FQDN) |
 | Inbound SSH | sshd under systemd | not yet — K4 adds an sshd sidecar |

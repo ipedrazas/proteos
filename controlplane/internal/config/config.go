@@ -17,12 +17,18 @@ import (
 	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
 )
 
-// HostConfig identifies one additional KVM host beyond the primary
+// HostConfig identifies one additional host beyond the primary
 // (TAV-37: multi-host foundation). Name must be unique across the fleet
 // (including the primary's HostName); URL is that host's node-agent base URL.
+//
+// Driver (K3) is the backend that agent runs — "firecracker" (default), "dev",
+// or "kubernetes" for an in-cluster cluster-agent. The control plane needs it
+// before it calls the agent at all: it decides which templates may be placed on
+// the host and whether a stop can hibernate.
 type HostConfig struct {
-	Name string `json:"name"`
-	URL  string `json:"url"`
+	Name   string `json:"name"`
+	URL    string `json:"url"`
+	Driver string `json:"driver,omitempty"`
 }
 
 // Config is the fully-resolved control-plane configuration.
@@ -111,12 +117,17 @@ type Config struct {
 	// AgentToken/NodeCAFile.
 	HostName string
 
+	// HostDriver (PROTEOS_HOST_DRIVER) is the backend the primary host's
+	// node-agent runs: "firecracker" (default), "dev", or "kubernetes". It must
+	// match that agent's own PROTEOS_AGENT_DRIVER.
+	HostDriver string
+
 	// NodeAgentURL is the private base URL the control plane dials the primary
 	// host's node-agent at (e.g. http://127.0.0.1:9090).
 	NodeAgentURL string
 
-	// AdditionalHosts (PROTEOS_HOSTS, JSON array of {"name","url"}) are extra
-	// KVM hosts beyond the primary one, upserted into `hosts` at startup
+	// AdditionalHosts (PROTEOS_HOSTS, JSON array of {"name","url","driver"}) are
+	// extra hosts beyond the primary one, upserted into `hosts` at startup
 	// alongside it. The scheduler (machine.Service.chooseHost) then places new
 	// machines across every active host by free capacity; nodeclient.Registry
 	// dials each machine's own host by looking up hosts.agent_url per call.
@@ -168,8 +179,16 @@ type Config struct {
 	KernelRef string
 	RootfsRef string
 
+	// ImageRef (PROTEOS_IMAGE_REF) is the OCI image the synthesized "base"
+	// template boots on a kubernetes host (K3), e.g.
+	// ghcr.io/tavon-ai/proteos-guest:base-1.2.3. Empty (the default) leaves the
+	// fallback catalog Firecracker-only, so a cluster host would have nothing it
+	// can boot; a Kubernetes deployment sets this or PROTEOS_TEMPLATES_FILE.
+	ImageRef string
+
 	// TemplatesFile (PROTEOS_TEMPLATES_FILE) is the path to a JSON machine-template
-	// catalog ({"templates":[{id,label,description,rootfs_ref,kernel_ref,defaults}]}).
+	// catalog
+	// ({"templates":[{id,label,description,rootfs_ref,kernel_ref,image_ref,defaults}]}).
 	// When set it is the source of truth for create-time image refs and default
 	// resources; when unset, a single "base" template is synthesized from
 	// RootfsRef/KernelRef + the Machine* resource defaults.
@@ -250,6 +269,7 @@ func Load() (*Config, error) {
 		CookieSecure:        getenv("PROTEOS_COOKIE_SECURE", "true") == "true",
 
 		HostName:     getenv("PROTEOS_HOST_NAME", "local"),
+		HostDriver:   getenv("PROTEOS_HOST_DRIVER", agentapi.DriverFirecracker),
 		NodeAgentURL: getenv("PROTEOS_NODE_AGENT_URL", "http://127.0.0.1:9090"),
 		AgentToken:   os.Getenv("PROTEOS_AGENT_TOKEN"),
 		NodeCAFile:   os.Getenv("PROTEOS_NODE_CA_FILE"),
@@ -262,6 +282,7 @@ func Load() (*Config, error) {
 		MachineMaxPerUser: getenvInt("PROTEOS_MAX_MACHINES_PER_USER", 5),
 		KernelRef:         getenv("PROTEOS_KERNEL_REF", "vmlinux-6.1"),
 		RootfsRef:         getenv("PROTEOS_ROOTFS_REF", "ubuntu-24.04"),
+		ImageRef:          os.Getenv("PROTEOS_IMAGE_REF"),
 		TemplatesFile:     os.Getenv("PROTEOS_TEMPLATES_FILE"),
 		MaxVcpus:          getenvInt("PROTEOS_MAX_VCPUS", 8),
 		MaxMemMiB:         getenvInt("PROTEOS_MAX_MEM_MIB", 16384),
@@ -290,6 +311,9 @@ func Load() (*Config, error) {
 	// opts out. Applies to the primary host and every additional one alike.
 	if err := c.checkAgentURL(c.NodeAgentURL, "PROTEOS_NODE_AGENT_URL"); err != nil {
 		return nil, err
+	}
+	if err := validateHostDriver(c.HostDriver); err != nil {
+		return nil, fmt.Errorf("PROTEOS_HOST_DRIVER: %w", err)
 	}
 
 	hosts, err := loadAdditionalHosts()
@@ -361,9 +385,11 @@ func normalizeGitHosts(hosts []string) ([]string, error) {
 	return out, nil
 }
 
-// loadAdditionalHosts parses PROTEOS_HOSTS (a JSON array of {"name","url"}),
-// the extra KVM hosts (TAV-37: multi-host foundation) upserted into `hosts`
-// alongside the primary one at startup. Unset/empty ⇒ no additional hosts.
+// loadAdditionalHosts parses PROTEOS_HOSTS (a JSON array of
+// {"name","url","driver"}), the extra hosts (TAV-37: multi-host foundation)
+// upserted into `hosts` alongside the primary one at startup. An omitted driver
+// defaults to firecracker, matching the hosts.driver column default and every
+// PROTEOS_HOSTS value written before K3. Unset/empty ⇒ no additional hosts.
 func loadAdditionalHosts() ([]HostConfig, error) {
 	raw := os.Getenv("PROTEOS_HOSTS")
 	if strings.TrimSpace(raw) == "" {
@@ -373,12 +399,32 @@ func loadAdditionalHosts() ([]HostConfig, error) {
 	if err := json.Unmarshal([]byte(raw), &hosts); err != nil {
 		return nil, fmt.Errorf("PROTEOS_HOSTS: invalid JSON: %w", err)
 	}
-	for i, h := range hosts {
-		if h.Name == "" || h.URL == "" {
+	for i := range hosts {
+		if hosts[i].Name == "" || hosts[i].URL == "" {
 			return nil, fmt.Errorf("PROTEOS_HOSTS[%d]: name and url are both required", i)
+		}
+		if hosts[i].Driver == "" {
+			hosts[i].Driver = agentapi.DriverFirecracker
+		}
+		if err := validateHostDriver(hosts[i].Driver); err != nil {
+			return nil, fmt.Errorf("PROTEOS_HOSTS[%d]: %w", i, err)
 		}
 	}
 	return hosts, nil
+}
+
+// validateHostDriver rejects a driver kind the control plane has no meaning for.
+// The hosts.driver CHECK constraint would reject it too, but at startup — after
+// the seed transaction — which reads as a database error rather than as the
+// typo in PROTEOS_HOSTS that it is.
+func validateHostDriver(kind string) error {
+	switch kind {
+	case agentapi.DriverFirecracker, agentapi.DriverKubernetes, agentapi.DriverDev:
+		return nil
+	default:
+		return fmt.Errorf("unknown driver %q (want %s, %s or %s)", kind,
+			agentapi.DriverFirecracker, agentapi.DriverKubernetes, agentapi.DriverDev)
+	}
 }
 
 // OIDCIssuer returns the Zitadel issuer URL derived from ZitadelDomain: a bare

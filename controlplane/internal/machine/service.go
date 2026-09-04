@@ -51,17 +51,19 @@ type NodeClient interface {
 	Capacity(ctx context.Context, hostID pgtype.UUID) (agentapi.CapacityResponse, error)
 }
 
-// Spec is the resource shape and pinned image refs stamped on new machines.
-// Vcpus/MemMiB/DiskMiB/KernelRef/RootfsRef are the legacy single-image fallback,
-// used when Catalog is Empty() (i.e. no template catalog is configured — the
-// path tests exercise). When Catalog is non-empty it is the source of truth for
-// a new machine's image refs and default resources; the legacy fields are unused.
+// Spec is the resource shape and pinned image refs stamped on new machines. The
+// Vcpus/MemMiB/DiskMiB/KernelRef/RootfsRef/ImageRef fields are the legacy
+// single-image fallback, used when Catalog is Empty() (i.e. no template catalog
+// is configured — the path tests exercise). When Catalog is non-empty it is the
+// source of truth for a new machine's image refs and default resources; the
+// legacy fields are unused.
 type Spec struct {
 	Vcpus      int
 	MemMiB     int
 	DiskMiB    int // Phase 4: persistent disk size (default 10240)
 	KernelRef  string
 	RootfsRef  string
+	ImageRef   string         // K3: OCI image for kubernetes hosts; empty ⇒ firecracker-only
 	MaxPerUser int            // per-user machine cap; ≤0 ⇒ defaultMaxPerUser
 	Catalog    Catalog        // machine-template catalog; Empty() ⇒ legacy single-image path
 	Limits     ResourceLimits // caps for user resource overrides; Empty() ⇒ no bound-checking
@@ -299,22 +301,30 @@ func (s *Service) Create(ctx context.Context, userID pgtype.UUID, opts CreateOpt
 		name = nextMachineName(existing)
 	}
 
-	rootfsRef, kernelRef, res, templateID, err := s.resolveCreate(opts)
+	tmpl, res, templateID, err := s.resolveCreate(opts)
 	if err != nil {
 		return store.Machine{}, err
 	}
-	host, err := s.chooseHost(ctx, res)
+	host, err := s.chooseHost(ctx, res, tmpl)
 	if err != nil {
 		return store.Machine{}, err
 	}
 	diskMiB := res.DiskMiB
 	specJSON, _ := json.Marshal(map[string]int{"vcpus": res.Vcpus, "mem_mib": res.MemMiB, "disk_mib": diskMiB})
+	// image_ref is stored as NULL when the template has none: a Firecracker-only
+	// template's machine has no image, which is not the same as an empty one.
+	var imageRef *string
+	if tmpl.ImageRef != "" {
+		v := tmpl.ImageRef
+		imageRef = &v
+	}
 	m, err := s.q.CreateMachine(ctx, store.CreateMachineParams{
 		UserID:       userID,
 		HostID:       host.ID,
 		Name:         name,
-		KernelRef:    kernelRef,
-		RootfsRef:    rootfsRef,
+		KernelRef:    tmpl.KernelRef,
+		RootfsRef:    tmpl.RootfsRef,
+		ImageRef:     imageRef,
 		ResourceSpec: specJSON,
 		TemplateID:   templateID,
 	})
@@ -355,30 +365,35 @@ func (s *Service) Create(ctx context.Context, userID pgtype.UUID, opts CreateOpt
 	}
 
 	compensate = false
-	return s.ensureOnAgent(ctx, m, kernelRef, rootfsRef)
+	return s.ensureOnAgent(ctx, m)
 }
 
-// resolveCreate determines a new machine's image refs, resource spec, and
-// template id from the create options. With an empty catalog (tests / legacy
-// single-image deployments configured only via the global Spec) it returns the
-// Spec's refs and resources and a nil template id. Otherwise it picks the named
-// template (or the catalog default when TemplateID is empty), returning
-// ErrUnknownTemplate for an unrecognised id. (Slice 2 layers user resource
+// resolveCreate determines the template a new machine is created from, its
+// resource spec, and the template id to stamp on the row. With an empty catalog
+// (tests / legacy single-image deployments configured only via the global Spec)
+// it returns a synthetic template holding the Spec's refs, the Spec's resources,
+// and a nil template id. Otherwise it picks the named template (or the catalog
+// default when TemplateID is empty), returning ErrUnknownTemplate for an
+// unrecognised id. (Slice 2 layers user resource
 // overrides + caps on top of the chosen template's defaults here.)
-func (s *Service) resolveCreate(opts CreateOptions) (rootfsRef, kernelRef string, res Resources, templateID *string, err error) {
+func (s *Service) resolveCreate(opts CreateOptions) (t Template, res Resources, templateID *string, err error) {
 	if s.spec.Catalog.Empty() {
 		disk := s.spec.DiskMiB
 		if disk <= 0 {
 			disk = 10240
 		}
-		return s.spec.RootfsRef, s.spec.KernelRef,
-			Resources{Vcpus: s.spec.Vcpus, MemMiB: s.spec.MemMiB, DiskMiB: disk}, nil, nil
+		// A synthetic template standing in for the global Spec, so placement and
+		// error messages have the same shape on both paths. Its id is a label
+		// only — the returned templateID stays nil, so nothing is stamped on the
+		// machine row.
+		t = Template{ID: "base", RootfsRef: s.spec.RootfsRef, KernelRef: s.spec.KernelRef, ImageRef: s.spec.ImageRef}
+		return t, Resources{Vcpus: s.spec.Vcpus, MemMiB: s.spec.MemMiB, DiskMiB: disk}, nil, nil
 	}
-	t := s.spec.Catalog.Default()
+	t = s.spec.Catalog.Default()
 	if opts.TemplateID != "" {
 		got, ok := s.spec.Catalog.Get(opts.TemplateID)
 		if !ok {
-			return "", "", Resources{}, nil, ErrUnknownTemplate
+			return Template{}, Resources{}, nil, ErrUnknownTemplate
 		}
 		t = got
 	}
@@ -396,11 +411,11 @@ func (s *Service) resolveCreate(opts CreateOptions) (rootfsRef, kernelRef string
 	}
 	if !s.spec.Limits.Empty() {
 		if err := s.spec.Limits.Validate(res); err != nil {
-			return "", "", Resources{}, nil, err
+			return Template{}, Resources{}, nil, err
 		}
 	}
 	id := t.ID
-	return t.RootfsRef, t.KernelRef, res, &id, nil
+	return t, res, &id, nil
 }
 
 // Start cold-boots a stopped or errored machine: transition to starting → ask
@@ -419,13 +434,20 @@ func (s *Service) Start(ctx context.Context, userID, machineID pgtype.UUID) (sto
 	if err != nil {
 		return store.Machine{}, mapTransitionErr(err)
 	}
-	return s.ensureOnAgent(ctx, m, m.KernelRef, m.RootfsRef)
+	return s.ensureOnAgent(ctx, m)
 }
 
 // Stop hibernates a running machine (Phase 4 decision #4: stop = hibernate):
 // transition running → hibernating → ask the agent to pause+snapshot. The agent
 // falls back to a cold poweroff internally if snapshotting fails; either way the
 // poller advances the machine to stopped. Invalid current state ⇒ ErrInvalidState.
+//
+// K3: on a host whose backend cannot hibernate (kubernetes — a pod has no RAM to
+// snapshot and restore) the machine goes running → stopping and the agent is
+// asked for a poweroff. The two paths differ only in which transitional state
+// the machine passes through, which is the point: `hibernating` on a machine
+// that was in fact powered off would misreport what happened to the user's
+// working state, and the SPA renders the difference.
 func (s *Service) Stop(ctx context.Context, userID, machineID pgtype.UUID) (store.Machine, error) {
 	m, err := s.getOwned(ctx, userID, machineID)
 	if err != nil {
@@ -434,16 +456,66 @@ func (s *Service) Stop(ctx context.Context, userID, machineID pgtype.UUID) (stor
 	if State(m.State) != StateRunning {
 		return store.Machine{}, ErrInvalidState
 	}
-	m, _, err = s.transition(ctx, m.ID, StateRunning, StateHibernating, ActorUser(UUIDString(userID)), EventTransition, nil, nil)
+	to, mode := StateHibernating, agentapi.StopModeHibernate
+	if !s.hostSupportsHibernate(ctx, m) {
+		to, mode = StateStopping, agentapi.StopModePoweroff
+	}
+	m, _, err = s.transition(ctx, m.ID, StateRunning, to, ActorUser(UUIDString(userID)), EventTransition, nil, nil)
 	if err != nil {
 		return store.Machine{}, mapTransitionErr(err)
 	}
 
 	id := UUIDString(m.ID)
-	if err := s.nodes.Stop(ctx, id, agentapi.StopModeHibernate); err != nil {
-		return s.fail(ctx, m, StateHibernating, "node-agent stop failed: "+err.Error())
+	if err := s.nodes.Stop(ctx, id, mode); err != nil {
+		return s.fail(ctx, m, to, "node-agent stop failed: "+err.Error())
 	}
 	return m, nil
+}
+
+// hostSupportsHibernate reports whether the backend behind m's host can honour a
+// hibernate stop (K3). A host whose row cannot be read is treated as capable:
+// hibernate is what every host did before this column existed, and the agent
+// falls back to a poweroff on its own if it cannot snapshot — so the failure
+// mode of guessing wrong here is a machine that reports `hibernating` briefly,
+// not one that fails to stop.
+func (s *Service) hostSupportsHibernate(ctx context.Context, m store.Machine) bool {
+	host, err := s.q.GetMachineHost(ctx, m.ID)
+	if err != nil {
+		slog.Warn("stop: host lookup failed, assuming hibernate is supported",
+			"machine", UUIDString(m.ID), "err", err)
+		return true
+	}
+	return agentapi.DriverSupportsHibernate(host.Driver)
+}
+
+// HostFor returns the host a machine is placed on, or nil when it has none (the
+// row is unscheduled, or its host was removed). K3: callers read Host.Driver to
+// learn which backend the machine actually runs on.
+func (s *Service) HostFor(ctx context.Context, machineID pgtype.UUID) (*store.Host, error) {
+	h, err := s.q.GetMachineHost(ctx, machineID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &h, nil
+}
+
+// HostDrivers returns every host's driver kind keyed by host id (K3). The API
+// renders a machine's backend from it. One query for the whole (small) hosts
+// table rather than a join per machine: the machine list and the SSE snapshot
+// both render many machines at once, and the fleet has a handful of hosts.
+func (s *Service) HostDrivers(ctx context.Context) (map[pgtype.UUID]string, error) {
+	hosts, err := s.q.ListHosts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[pgtype.UUID]string, len(hosts))
+	for _, h := range hosts {
+		out[h.ID] = h.Driver
+	}
+	return out, nil
 }
 
 // Destroy tears a machine down completely and removes it. Unlike Stop (which
@@ -586,11 +658,12 @@ func (s *Service) Rename(ctx context.Context, userID, machineID pgtype.UUID, nam
 
 // buildEnsureRequest assembles the agent ensure-running request for m: the
 // resource shape (template/spec, falling back to the global Spec for legacy
-// rows), the Phase 4 disk + volume key (fetched fresh from the secret store and
-// never logged), and the TAV-116 network policy. Shared by ensureOnAgent (the
+// rows), the image refs pinned on the row at create time, the Phase 4 disk +
+// volume key (fetched fresh from the secret store and never logged), and the
+// TAV-116 network policy. Shared by ensureOnAgent (the
 // initial ensure at create/start) and RetryEnsure (TAV-134's poller-driven
 // retry of the same call) so the two never drift.
-func (s *Service) buildEnsureRequest(ctx context.Context, m store.Machine, kernelRef, rootfsRef string) (agentapi.EnsureRequest, error) {
+func (s *Service) buildEnsureRequest(ctx context.Context, m store.Machine) (agentapi.EnsureRequest, error) {
 	// vCPUs/memory come from the machine's own resource_spec (templates can size
 	// them differently), falling back to the global Spec for legacy rows whose
 	// spec is missing/zero.
@@ -601,8 +674,14 @@ func (s *Service) buildEnsureRequest(ctx context.Context, m store.Machine, kerne
 	req := agentapi.EnsureRequest{
 		Vcpus:     vcpus,
 		MemMiB:    memMiB,
-		KernelRef: kernelRef,
-		RootfsRef: rootfsRef,
+		KernelRef: m.KernelRef,
+		RootfsRef: m.RootfsRef,
+	}
+	// K3: the OCI image a kubernetes host boots. Omitted (omitempty) for a
+	// machine created from a Firecracker-only template, which is every machine
+	// that predates the column.
+	if m.ImageRef != nil {
+		req.ImageRef = *m.ImageRef
 	}
 	if disk, err := s.q.GetDiskByMachineID(ctx, m.ID); err == nil {
 		req.DiskID = UUIDString(disk.ID)
@@ -628,8 +707,8 @@ func (s *Service) buildEnsureRequest(ctx context.Context, m store.Machine, kerne
 // transitional state (provisioning or starting). On agent failure it moves the
 // machine to error; on success it records the returned handle and leaves the
 // machine transitional for the poller to advance to running.
-func (s *Service) ensureOnAgent(ctx context.Context, m store.Machine, kernelRef, rootfsRef string) (store.Machine, error) {
-	req, err := s.buildEnsureRequest(ctx, m, kernelRef, rootfsRef)
+func (s *Service) ensureOnAgent(ctx context.Context, m store.Machine) (store.Machine, error) {
+	req, err := s.buildEnsureRequest(ctx, m)
 	if err != nil {
 		return s.fail(ctx, m, State(m.State), err.Error())
 	}
@@ -656,7 +735,7 @@ func (s *Service) ensureOnAgent(ctx context.Context, m store.Machine, kernelRef,
 // moves the machine to error once that budget is exhausted. A failure here is
 // therefore just returned to the caller, not recorded on the machine.
 func (s *Service) RetryEnsure(ctx context.Context, m store.Machine) error {
-	req, err := s.buildEnsureRequest(ctx, m, m.KernelRef, m.RootfsRef)
+	req, err := s.buildEnsureRequest(ctx, m)
 	if err != nil {
 		return err
 	}

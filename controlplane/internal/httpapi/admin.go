@@ -72,7 +72,8 @@ type adminMachine struct {
 	TemplateID   *string         `json:"template_id"`
 	ResourceSpec json.RawMessage `json:"resource_spec"`
 	LastError    *string         `json:"last_error"`
-	Host         *string         `json:"host"`          // node the machine is placed on; null before scheduling
+	Host         *string         `json:"host"`    // node the machine is placed on; null before scheduling
+	Backend      *string         `json:"backend"` // that host's driver kind (K3); null alongside Host
 	CreatedAt    string          `json:"created_at"`
 	LastActiveAt *string         `json:"last_active_at"` // null when never active
 }
@@ -155,6 +156,7 @@ func toAdminMachine(row store.AdminListMachinesRow) adminMachine {
 		ResourceSpec: json.RawMessage(row.ResourceSpec),
 		LastError:    row.LastError,
 		Host:         row.HostName,
+		Backend:      row.HostDriver,
 		Owner: adminOwner{
 			ID:        machine.UUIDString(row.UserID),
 			Login:     row.OwnerLogin,

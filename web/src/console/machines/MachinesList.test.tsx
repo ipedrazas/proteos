@@ -31,6 +31,7 @@ function machine(over: Partial<MachineSummary> = {}): MachineSummary {
     disk_id: null,
     disk_mib: 10240,
     snapshot: null,
+    backend: 'firecracker',
     ...over,
   };
 }

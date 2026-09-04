@@ -158,17 +158,31 @@ SELECT * FROM git_host_links WHERE user_id = $1 ORDER BY host;
 DELETE FROM git_host_links WHERE user_id = $1 AND host = $2;
 
 -- name: UpsertHostByName :one
--- Seed/refresh a host by its unique name at control-plane startup.
-INSERT INTO hosts (name, agent_url)
-VALUES ($1, $2)
+-- Seed/refresh a host by its unique name at control-plane startup. driver is the
+-- backend that host's node-agent runs (K3: 'firecracker' | 'kubernetes' | 'dev');
+-- re-seeding an existing host updates it, so an operator can re-point a name at
+-- a different agent and kind in one restart. An empty driver means the column
+-- default, firecracker — the control plane validates the configured kind before
+-- it ever seeds (config.validateHostDriver), so callers that do not care which
+-- backend a host runs (tests, and any caller predating the column) get the
+-- behaviour every host had before K3 rather than a constraint violation.
+INSERT INTO hosts (name, agent_url, driver)
+VALUES ($1, $2, COALESCE(NULLIF(sqlc.arg(driver)::text, ''), 'firecracker'))
 ON CONFLICT (name) DO UPDATE
-    SET agent_url = EXCLUDED.agent_url
+    SET agent_url = EXCLUDED.agent_url,
+        driver    = EXCLUDED.driver
 RETURNING *;
 
 -- name: GetHostByID :one
 -- Resolve a single host by id (TAV-37: the scheduler queries each active
 -- host's capacity by id before a machine exists to join against).
 SELECT * FROM hosts WHERE id = $1;
+
+-- name: ListHosts :many
+-- Every host, active or not (K3: the API renders a machine's backend from its
+-- host's driver, and the fleet is small enough that one query beats a per-machine
+-- join). Ordered by name for stable output.
+SELECT * FROM hosts ORDER BY name;
 
 -- name: ListActiveHosts :many
 -- Hosts eligible for scheduling new machines (TAV-37: multi-host foundation),
@@ -185,11 +199,13 @@ WHERE m.id = $1;
 
 -- name: CreateMachine :one
 -- Create one of a user's machines in the initial 'requested' state, pinning the
--- image refs and resource spec for the lifetime of the row. name is the display
+-- image refs and resource spec for the lifetime of the row: kernel_ref/rootfs_ref
+-- for a Firecracker host, image_ref (NULL when the template has none) for a
+-- kubernetes one. name is the display
 -- label (auto-named machine-N by the service; renameable later). template_id is
 -- the catalog template the machine was created from (NULL for legacy machines).
-INSERT INTO machines (user_id, host_id, state, name, kernel_ref, rootfs_ref, resource_spec, template_id)
-VALUES ($1, $2, 'requested', $3, $4, $5, $6, $7)
+INSERT INTO machines (user_id, host_id, state, name, kernel_ref, rootfs_ref, image_ref, resource_spec, template_id)
+VALUES ($1, $2, 'requested', $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: GetMachineByUserID :one
@@ -595,7 +611,8 @@ SELECT
     u.login      AS owner_login,
     u.email      AS owner_email,
     u.avatar_url AS owner_avatar_url,
-    h.name       AS host_name
+    h.name       AS host_name,
+    h.driver     AS host_driver
 FROM machines m
 JOIN users u ON u.id = m.user_id
 LEFT JOIN hosts h ON h.id = m.host_id

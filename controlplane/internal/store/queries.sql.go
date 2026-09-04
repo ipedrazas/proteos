@@ -82,7 +82,8 @@ SELECT
     u.login      AS owner_login,
     u.email      AS owner_email,
     u.avatar_url AS owner_avatar_url,
-    h.name       AS host_name
+    h.name       AS host_name,
+    h.driver     AS host_driver
 FROM machines m
 JOIN users u ON u.id = m.user_id
 LEFT JOIN hosts h ON h.id = m.host_id
@@ -104,6 +105,7 @@ type AdminListMachinesRow struct {
 	OwnerEmail     string             `json:"owner_email"`
 	OwnerAvatarUrl string             `json:"owner_avatar_url"`
 	HostName       *string            `json:"host_name"`
+	HostDriver     *string            `json:"host_driver"`
 }
 
 // Every machine in the fleet with its owner, newest first, capped at $1.
@@ -134,6 +136,7 @@ func (q *Queries) AdminListMachines(ctx context.Context, limit int32) ([]AdminLi
 			&i.OwnerEmail,
 			&i.OwnerAvatarUrl,
 			&i.HostName,
+			&i.HostDriver,
 		); err != nil {
 			return nil, err
 		}
@@ -182,9 +185,9 @@ func (q *Queries) CreateDisk(ctx context.Context, arg CreateDiskParams) (Disk, e
 }
 
 const createMachine = `-- name: CreateMachine :one
-INSERT INTO machines (user_id, host_id, state, name, kernel_ref, rootfs_ref, resource_spec, template_id)
-VALUES ($1, $2, 'requested', $3, $4, $5, $6, $7)
-RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id
+INSERT INTO machines (user_id, host_id, state, name, kernel_ref, rootfs_ref, image_ref, resource_spec, template_id)
+VALUES ($1, $2, 'requested', $3, $4, $5, $6, $7, $8)
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id, image_ref
 `
 
 type CreateMachineParams struct {
@@ -193,12 +196,15 @@ type CreateMachineParams struct {
 	Name         string      `json:"name"`
 	KernelRef    string      `json:"kernel_ref"`
 	RootfsRef    string      `json:"rootfs_ref"`
+	ImageRef     *string     `json:"image_ref"`
 	ResourceSpec []byte      `json:"resource_spec"`
 	TemplateID   *string     `json:"template_id"`
 }
 
 // Create one of a user's machines in the initial 'requested' state, pinning the
-// image refs and resource spec for the lifetime of the row. name is the display
+// image refs and resource spec for the lifetime of the row: kernel_ref/rootfs_ref
+// for a Firecracker host, image_ref (NULL when the template has none) for a
+// kubernetes one. name is the display
 // label (auto-named machine-N by the service; renameable later). template_id is
 // the catalog template the machine was created from (NULL for legacy machines).
 func (q *Queries) CreateMachine(ctx context.Context, arg CreateMachineParams) (Machine, error) {
@@ -208,6 +214,7 @@ func (q *Queries) CreateMachine(ctx context.Context, arg CreateMachineParams) (M
 		arg.Name,
 		arg.KernelRef,
 		arg.RootfsRef,
+		arg.ImageRef,
 		arg.ResourceSpec,
 		arg.TemplateID,
 	)
@@ -230,6 +237,7 @@ func (q *Queries) CreateMachine(ctx context.Context, arg CreateMachineParams) (M
 		&i.Boot,
 		&i.Name,
 		&i.TemplateID,
+		&i.ImageRef,
 	)
 	return i, err
 }
@@ -605,7 +613,7 @@ func (q *Queries) GetGitIdentity(ctx context.Context, userID pgtype.UUID) (GetGi
 }
 
 const getHostByID = `-- name: GetHostByID :one
-SELECT id, name, agent_url, status, created_at FROM hosts WHERE id = $1
+SELECT id, name, agent_url, status, created_at, driver FROM hosts WHERE id = $1
 `
 
 // Resolve a single host by id (TAV-37: the scheduler queries each active
@@ -619,12 +627,13 @@ func (q *Queries) GetHostByID(ctx context.Context, id pgtype.UUID) (Host, error)
 		&i.AgentUrl,
 		&i.Status,
 		&i.CreatedAt,
+		&i.Driver,
 	)
 	return i, err
 }
 
 const getMachineByID = `-- name: GetMachineByID :one
-SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id FROM machines WHERE id = $1
+SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id, image_ref FROM machines WHERE id = $1
 `
 
 func (q *Queries) GetMachineByID(ctx context.Context, id pgtype.UUID) (Machine, error) {
@@ -648,12 +657,13 @@ func (q *Queries) GetMachineByID(ctx context.Context, id pgtype.UUID) (Machine, 
 		&i.Boot,
 		&i.Name,
 		&i.TemplateID,
+		&i.ImageRef,
 	)
 	return i, err
 }
 
 const getMachineByUserID = `-- name: GetMachineByUserID :one
-SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id FROM machines WHERE user_id = $1
+SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id, image_ref FROM machines WHERE user_id = $1
 `
 
 // The user's single machine. Retained only for the single-machine fallback in
@@ -679,12 +689,13 @@ func (q *Queries) GetMachineByUserID(ctx context.Context, userID pgtype.UUID) (M
 		&i.Boot,
 		&i.Name,
 		&i.TemplateID,
+		&i.ImageRef,
 	)
 	return i, err
 }
 
 const getMachineHost = `-- name: GetMachineHost :one
-SELECT h.id, h.name, h.agent_url, h.status, h.created_at FROM hosts h
+SELECT h.id, h.name, h.agent_url, h.status, h.created_at, h.driver FROM hosts h
 JOIN machines m ON m.host_id = h.id
 WHERE m.id = $1
 `
@@ -701,6 +712,7 @@ func (q *Queries) GetMachineHost(ctx context.Context, id pgtype.UUID) (Host, err
 		&i.AgentUrl,
 		&i.Status,
 		&i.CreatedAt,
+		&i.Driver,
 	)
 	return i, err
 }
@@ -1166,7 +1178,7 @@ func (q *Queries) LinkUserOIDC(ctx context.Context, arg LinkUserOIDCParams) (Use
 }
 
 const listActiveHosts = `-- name: ListActiveHosts :many
-SELECT id, name, agent_url, status, created_at FROM hosts WHERE status = 'active' ORDER BY name
+SELECT id, name, agent_url, status, created_at, driver FROM hosts WHERE status = 'active' ORDER BY name
 `
 
 // Hosts eligible for scheduling new machines (TAV-37: multi-host foundation),
@@ -1186,6 +1198,7 @@ func (q *Queries) ListActiveHosts(ctx context.Context) ([]Host, error) {
 			&i.AgentUrl,
 			&i.Status,
 			&i.CreatedAt,
+			&i.Driver,
 		); err != nil {
 			return nil, err
 		}
@@ -1394,6 +1407,40 @@ func (q *Queries) ListGitHostLinks(ctx context.Context, userID pgtype.UUID) ([]G
 	return items, nil
 }
 
+const listHosts = `-- name: ListHosts :many
+SELECT id, name, agent_url, status, created_at, driver FROM hosts ORDER BY name
+`
+
+// Every host, active or not (K3: the API renders a machine's backend from its
+// host's driver, and the fleet is small enough that one query beats a per-machine
+// join). Ordered by name for stable output.
+func (q *Queries) ListHosts(ctx context.Context) ([]Host, error) {
+	rows, err := q.db.Query(ctx, listHosts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Host{}
+	for rows.Next() {
+		var i Host
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.AgentUrl,
+			&i.Status,
+			&i.CreatedAt,
+			&i.Driver,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLinkableUsersByEmail = `-- name: ListLinkableUsersByEmail :many
 SELECT id, github_user_id, login, email, avatar_url, status, created_at, download_as_is, claude_attribution, oidc_issuer, oidc_subject, ssh_enabled, is_admin FROM users WHERE email = $1 AND oidc_subject IS NULL
 `
@@ -1522,7 +1569,7 @@ func (q *Queries) ListMachineEventsRecent(ctx context.Context, arg ListMachineEv
 }
 
 const listMachinesByUserID = `-- name: ListMachinesByUserID :many
-SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id FROM machines WHERE user_id = $1 ORDER BY created_at ASC, id ASC
+SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id, image_ref FROM machines WHERE user_id = $1 ORDER BY created_at ASC, id ASC
 `
 
 // All of a user's machines, oldest-first (stable order for the switcher).
@@ -1553,6 +1600,7 @@ func (q *Queries) ListMachinesByUserID(ctx context.Context, userID pgtype.UUID) 
 			&i.Boot,
 			&i.Name,
 			&i.TemplateID,
+			&i.ImageRef,
 		); err != nil {
 			return nil, err
 		}
@@ -1565,7 +1613,7 @@ func (q *Queries) ListMachinesByUserID(ctx context.Context, userID pgtype.UUID) 
 }
 
 const listMachinesInStates = `-- name: ListMachinesInStates :many
-SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id FROM machines WHERE state = ANY($1::text[]) ORDER BY updated_at ASC
+SELECT id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id, image_ref FROM machines WHERE state = ANY($1::text[]) ORDER BY updated_at ASC
 `
 
 // Used by the poller to find transitional machines to advance and running
@@ -1597,6 +1645,7 @@ func (q *Queries) ListMachinesInStates(ctx context.Context, dollar_1 []string) (
 			&i.Boot,
 			&i.Name,
 			&i.TemplateID,
+			&i.ImageRef,
 		); err != nil {
 			return nil, err
 		}
@@ -1883,7 +1932,7 @@ func (q *Queries) MarkAgentTaskRunning(ctx context.Context, id pgtype.UUID) erro
 const renameMachine = `-- name: RenameMachine :one
 UPDATE machines SET name = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id, image_ref
 `
 
 type RenameMachineParams struct {
@@ -1913,6 +1962,7 @@ func (q *Queries) RenameMachine(ctx context.Context, arg RenameMachineParams) (M
 		&i.Boot,
 		&i.Name,
 		&i.TemplateID,
+		&i.ImageRef,
 	)
 	return i, err
 }
@@ -2000,7 +2050,7 @@ func (q *Queries) RevokeSession(ctx context.Context, tokenHash []byte) (pgtype.U
 const setMachineBoot = `-- name: SetMachineBoot :one
 UPDATE machines SET boot = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id, image_ref
 `
 
 type SetMachineBootParams struct {
@@ -2030,6 +2080,7 @@ func (q *Queries) SetMachineBoot(ctx context.Context, arg SetMachineBootParams) 
 		&i.Boot,
 		&i.Name,
 		&i.TemplateID,
+		&i.ImageRef,
 	)
 	return i, err
 }
@@ -2037,7 +2088,7 @@ func (q *Queries) SetMachineBoot(ctx context.Context, arg SetMachineBootParams) 
 const setMachineDisk = `-- name: SetMachineDisk :one
 UPDATE machines SET disk_id = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id, image_ref
 `
 
 type SetMachineDiskParams struct {
@@ -2067,6 +2118,7 @@ func (q *Queries) SetMachineDisk(ctx context.Context, arg SetMachineDiskParams) 
 		&i.Boot,
 		&i.Name,
 		&i.TemplateID,
+		&i.ImageRef,
 	)
 	return i, err
 }
@@ -2078,7 +2130,7 @@ SET vm_handle = $2,
     last_active_at = now(),
     updated_at = now()
 WHERE id = $1
-RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id, image_ref
 `
 
 type SetMachineRuntimeParams struct {
@@ -2110,6 +2162,7 @@ func (q *Queries) SetMachineRuntime(ctx context.Context, arg SetMachineRuntimePa
 		&i.Boot,
 		&i.Name,
 		&i.TemplateID,
+		&i.ImageRef,
 	)
 	return i, err
 }
@@ -2288,7 +2341,7 @@ SET state = $1,
     last_error = $2,
     updated_at = now()
 WHERE id = $3 AND state = $4
-RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id
+RETURNING id, user_id, state, host_id, vm_handle, guest_ip, kernel_ref, rootfs_ref, resource_spec, last_error, last_active_at, created_at, updated_at, disk_id, boot, name, template_id, image_ref
 `
 
 type UpdateMachineStateParams struct {
@@ -2328,6 +2381,7 @@ func (q *Queries) UpdateMachineState(ctx context.Context, arg UpdateMachineState
 		&i.Boot,
 		&i.Name,
 		&i.TemplateID,
+		&i.ImageRef,
 	)
 	return i, err
 }
@@ -2481,21 +2535,30 @@ func (q *Queries) UpsertGitIdentity(ctx context.Context, arg UpsertGitIdentityPa
 }
 
 const upsertHostByName = `-- name: UpsertHostByName :one
-INSERT INTO hosts (name, agent_url)
-VALUES ($1, $2)
+INSERT INTO hosts (name, agent_url, driver)
+VALUES ($1, $2, COALESCE(NULLIF($3::text, ''), 'firecracker'))
 ON CONFLICT (name) DO UPDATE
-    SET agent_url = EXCLUDED.agent_url
-RETURNING id, name, agent_url, status, created_at
+    SET agent_url = EXCLUDED.agent_url,
+        driver    = EXCLUDED.driver
+RETURNING id, name, agent_url, status, created_at, driver
 `
 
 type UpsertHostByNameParams struct {
 	Name     string `json:"name"`
 	AgentUrl string `json:"agent_url"`
+	Driver   string `json:"driver"`
 }
 
-// Seed/refresh a host by its unique name at control-plane startup.
+// Seed/refresh a host by its unique name at control-plane startup. driver is the
+// backend that host's node-agent runs (K3: 'firecracker' | 'kubernetes' | 'dev');
+// re-seeding an existing host updates it, so an operator can re-point a name at
+// a different agent and kind in one restart. An empty driver means the column
+// default, firecracker — the control plane validates the configured kind before
+// it ever seeds (config.validateHostDriver), so callers that do not care which
+// backend a host runs (tests, and any caller predating the column) get the
+// behaviour every host had before K3 rather than a constraint violation.
 func (q *Queries) UpsertHostByName(ctx context.Context, arg UpsertHostByNameParams) (Host, error) {
-	row := q.db.QueryRow(ctx, upsertHostByName, arg.Name, arg.AgentUrl)
+	row := q.db.QueryRow(ctx, upsertHostByName, arg.Name, arg.AgentUrl, arg.Driver)
 	var i Host
 	err := row.Scan(
 		&i.ID,
@@ -2503,6 +2566,7 @@ func (q *Queries) UpsertHostByName(ctx context.Context, arg UpsertHostByNamePara
 		&i.AgentUrl,
 		&i.Status,
 		&i.CreatedAt,
+		&i.Driver,
 	)
 	return i, err
 }

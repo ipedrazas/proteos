@@ -67,6 +67,7 @@ type Host struct {
 	AgentUrl  string             `json:"agent_url"`
 	Status    string             `json:"status"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Driver    string             `json:"driver"`
 }
 
 type Machine struct {
@@ -87,6 +88,7 @@ type Machine struct {
 	Boot         *string            `json:"boot"`
 	Name         string             `json:"name"`
 	TemplateID   *string            `json:"template_id"`
+	ImageRef     *string            `json:"image_ref"`
 }
 
 type MachineEvent struct {

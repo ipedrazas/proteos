@@ -108,6 +108,9 @@ export interface AdminMachine {
   last_error: string | null;
   // The node the machine is placed on; null before it has been scheduled.
   host: string | null;
+  // That host's backend (K3): 'firecracker' | 'kubernetes' | 'dev'. Null
+  // alongside host, for a machine that has not been scheduled.
+  backend: MachineBackend | null;
   created_at: string;
   last_active_at: string | null;
 }
@@ -122,6 +125,12 @@ export type MachineState =
   | 'hibernating'
   | 'stopped'
   | 'error';
+
+// MachineBackend is what a machine actually runs as: a Firecracker microVM on a
+// KVM host, or a pod on a Kubernetes cluster (K3). It is a property of the host
+// the machine was placed on, not of the machine, and it decides what the machine
+// can be asked to do — only a microVM hibernates into a memory snapshot.
+export type MachineBackend = 'firecracker' | 'kubernetes' | 'dev';
 
 // SnapshotSummary is the current hibernation snapshot metadata (Phase 4),
 // present only while the machine is hibernated (stopped with a usable snapshot).
@@ -151,6 +160,10 @@ export interface MachineSummary {
   disk_id: string | null;
   disk_mib: number | null;
   snapshot: SnapshotSummary | null;
+
+  // K3: the backend this machine runs on. Empty only when the control plane
+  // could not resolve the host, which reads as "assume the classic behaviour".
+  backend: MachineBackend | '';
 }
 
 // Per-machine outcome of a DELETE /api/machines bulk destroy call.

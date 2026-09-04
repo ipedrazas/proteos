@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
 )
 
 // Resources is a machine's resource spec: pinned vCPUs, memory, and persistent
@@ -74,19 +76,60 @@ type InvalidResourcesError struct{ Detail string }
 
 func (e InvalidResourcesError) Error() string { return "machine: invalid resources: " + e.Detail }
 
-// Template is one entry in the machine-template catalog: a named rootfs image
-// (the language toolchain layer) plus its default resource spec. The platform
-// layer and kernel are identical across templates, so a template varies only the
-// rootfs image and the suggested resources. RootfsRef/KernelRef are internal
-// build detail and are never exposed to the SPA (only id/label/description and
-// the defaults are — see TemplateView).
+// Template is one entry in the machine-template catalog: a named image (the
+// language toolchain layer) plus its default resource spec. The platform layer
+// is identical across templates, so a template varies only the image and the
+// suggested resources. RootfsRef/KernelRef/ImageRef are internal build detail
+// and are never exposed to the SPA (only id/label/description and the defaults
+// are — see TemplateView).
+//
+// A template carries the image for one or both backends (K3): RootfsRef +
+// KernelRef boot on a Firecracker host, ImageRef on a kubernetes one. They are
+// not interchangeable — an ext4 rootfs is not an OCI image — so which refs a
+// template carries decides which hosts it can be placed on (SupportsDriver).
 type Template struct {
 	ID          string    `json:"id"`
 	Label       string    `json:"label"`
 	Description string    `json:"description"`
 	RootfsRef   string    `json:"rootfs_ref"`
 	KernelRef   string    `json:"kernel_ref"`
+	ImageRef    string    `json:"image_ref"`
 	Defaults    Resources `json:"defaults"`
+}
+
+// SupportsDriver reports whether a host running the given driver kind can boot
+// this template. The scheduler filters candidate hosts through it before asking
+// any of them for capacity, so a template that only exists as an ext4 rootfs is
+// never placed on a cluster (and vice versa) — which would otherwise surface as
+// a machine stuck in provisioning with a driver.ErrBadSpec from the agent.
+//
+// An unrecognised kind supports nothing: hosts.driver is CHECK-constrained to
+// the kinds this build knows, so an unknown value means the database is ahead of
+// the binary, and refusing to place machines on a host we cannot reason about is
+// the safe reading.
+func (t Template) SupportsDriver(kind string) bool {
+	if agentapi.DriverBootsImage(kind) {
+		return t.ImageRef != ""
+	}
+	switch kind {
+	case agentapi.DriverFirecracker, agentapi.DriverDev:
+		return t.RootfsRef != ""
+	default:
+		return false
+	}
+}
+
+// SupportedDrivers lists the driver kinds this template can be placed on, in a
+// stable order. It exists for error messages — a placement failure should say
+// what the template needs rather than only that nothing fit.
+func (t Template) SupportedDrivers() []string {
+	var out []string
+	for _, k := range []string{agentapi.DriverFirecracker, agentapi.DriverKubernetes, agentapi.DriverDev} {
+		if t.SupportsDriver(k) {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // Catalog is the ordered, static set of templates a user can create machines
@@ -101,10 +144,12 @@ type Catalog struct {
 }
 
 // NewCatalog validates and indexes an ordered template list. It rejects an empty
-// list, blank/duplicate ids, a missing rootfs_ref, or non-positive default
-// resources — a bad catalog is a startup error, never a per-machine boot
-// failure. defaultKernelRef fills any template that omits its own kernel_ref
-// (the kernel is global; templates rarely set it).
+// list, blank/duplicate ids, a template that names no image at all, or
+// non-positive default resources — a bad catalog is a startup error, never a
+// per-machine boot failure. defaultKernelRef fills any template that omits its
+// own kernel_ref (the kernel is global; templates rarely set it), and is only
+// required by templates that actually carry a rootfs_ref: an image-only template
+// for a Kubernetes fleet has no kernel to boot.
 func NewCatalog(templates []Template, defaultKernelRef string) (Catalog, error) {
 	if len(templates) == 0 {
 		return Catalog{}, fmt.Errorf("template catalog is empty")
@@ -118,14 +163,16 @@ func NewCatalog(templates []Template, defaultKernelRef string) (Catalog, error) 
 		if _, dup := byID[t.ID]; dup {
 			return Catalog{}, fmt.Errorf("template %q: duplicate id", t.ID)
 		}
-		if t.RootfsRef == "" {
-			return Catalog{}, fmt.Errorf("template %q: rootfs_ref is required", t.ID)
+		if t.RootfsRef == "" && t.ImageRef == "" {
+			return Catalog{}, fmt.Errorf("template %q: at least one of rootfs_ref (firecracker) or image_ref (kubernetes) is required", t.ID)
 		}
-		if t.KernelRef == "" {
-			t.KernelRef = defaultKernelRef
-		}
-		if t.KernelRef == "" {
-			return Catalog{}, fmt.Errorf("template %q: kernel_ref is required (no default kernel set)", t.ID)
+		if t.RootfsRef != "" {
+			if t.KernelRef == "" {
+				t.KernelRef = defaultKernelRef
+			}
+			if t.KernelRef == "" {
+				return Catalog{}, fmt.Errorf("template %q: kernel_ref is required alongside rootfs_ref (no default kernel set)", t.ID)
+			}
 		}
 		if t.Defaults.Vcpus <= 0 || t.Defaults.MemMiB <= 0 || t.Defaults.DiskMiB <= 0 {
 			return Catalog{}, fmt.Errorf("template %q: defaults must have positive vcpus, mem_mib, disk_mib", t.ID)
@@ -139,20 +186,23 @@ func NewCatalog(templates []Template, defaultKernelRef string) (Catalog, error) 
 // SingleTemplateCatalog builds a one-entry catalog ("base") from the global
 // image refs and resource spec. It is the fallback when no PROTEOS_TEMPLATES_FILE
 // is configured, so a deployment with a single baked image still presents one
-// selectable template and stamps template_id="base" on new machines.
-func SingleTemplateCatalog(rootfsRef, kernelRef string, defaults Resources) (Catalog, error) {
+// selectable template and stamps template_id="base" on new machines. imageRef
+// (PROTEOS_IMAGE_REF) is what makes that fallback usable on a Kubernetes-only
+// deployment, which has no rootfs to name.
+func SingleTemplateCatalog(rootfsRef, kernelRef, imageRef string, defaults Resources) (Catalog, error) {
 	return NewCatalog([]Template{{
 		ID:          "base",
 		Label:       "Base",
 		Description: "Platform baseline image.",
 		RootfsRef:   rootfsRef,
 		KernelRef:   kernelRef,
+		ImageRef:    imageRef,
 		Defaults:    defaults,
 	}}, kernelRef)
 }
 
 // LoadCatalogFile reads a JSON catalog file of the shape
-// {"templates":[{"id","label","description","rootfs_ref","kernel_ref","defaults":{...}}]}.
+// {"templates":[{"id","label","description","rootfs_ref","kernel_ref","image_ref","defaults":{...}}]}.
 // defaultKernelRef fills any entry that omits kernel_ref.
 func LoadCatalogFile(path, defaultKernelRef string) (Catalog, error) {
 	b, err := os.ReadFile(path)

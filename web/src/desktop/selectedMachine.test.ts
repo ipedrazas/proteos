@@ -20,6 +20,7 @@ function m(id: string, state: MachineSummary['state']): MachineSummary {
     disk_id: null,
     disk_mib: null,
     snapshot: null,
+    backend: 'firecracker',
   };
 }
 
