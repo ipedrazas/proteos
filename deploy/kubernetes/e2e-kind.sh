@@ -71,9 +71,16 @@ cleanup() {
     if [[ ${FAILED:-0} -eq 1 ]]; then
       log "--- machine pods ---"
       kubectl -n "$MACHINE_NS" get pods,pvc -o wide 2>&1 | sed 's/^/    /' || true
-      kubectl -n "$MACHINE_NS" describe pods 2>&1 | tail -60 | sed 's/^/    /' || true
+      log "--- machine pod detail (conditions + probe failures) ---"
+      kubectl -n "$MACHINE_NS" describe pods 2>&1 | sed 's/^/    /' || true
+      log "--- machine namespace events ---"
+      # Events are where a pod that never becomes ready explains itself:
+      # scheduling, image pulls, volume attach, and failing probes.
+      kubectl -n "$MACHINE_NS" get events --sort-by=.lastTimestamp 2>&1 | tail -40 | sed 's/^/    /' || true
+      log "--- networkpolicies ---"
+      kubectl -n "$MACHINE_NS" get networkpolicies -o yaml 2>&1 | tail -60 | sed 's/^/    /' || true
       log "--- cluster-agent logs ---"
-      kubectl -n "$AGENT_NS" logs deploy/proteos-cluster-agent --tail=100 2>&1 | sed 's/^/    /' || true
+      kubectl -n "$AGENT_NS" logs deploy/proteos-cluster-agent --tail=60 2>&1 | sed 's/^/    /' || true
     fi
     kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
   fi
@@ -175,7 +182,7 @@ set +e
     PROTEOS_E2E_AGENT_URL="https://127.0.0.1:$LOCAL_PORT" \
       PROTEOS_E2E_AGENT_TOKEN="$TOKEN" \
       PROTEOS_E2E_GUEST_IMAGE="$GUEST_IMAGE" \
-      go test -tags=kind_e2e -count=1 -timeout 25m -v ./internal/driver/kubernetes/ -run 'TestKind'
+      go test -tags=kind_e2e -count=1 -failfast -timeout 25m -v ./internal/driver/kubernetes/ -run 'TestKind'
 )
 RC=$?
 set -e

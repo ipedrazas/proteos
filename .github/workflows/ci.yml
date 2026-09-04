@@ -273,8 +273,39 @@ jobs:
       - name: Install deps
         run: npm ci
 
+      # `npm audit` exits 1 for two very different things: "found high/critical
+      # vulnerabilities" and "could not reach the audit endpoint". npm's endpoint
+      # fails often enough that the second has blocked PRs that changed no
+      # JavaScript at all. So: enforce a real report, and treat the absence of
+      # one as a warning — a registry outage is not a finding about this repo.
       - name: npm audit
-        run: npm audit --audit-level=high
+        run: |
+          set +e
+          report="$(npm audit --json 2>/tmp/npm-audit.err)"
+          set -e
+          if ! printf '%s' "$report" | grep -q '"auditReportVersion"'; then
+            echo "::warning title=npm audit skipped::npm produced no audit report (registry or endpoint error); not failing the build"
+            cat /tmp/npm-audit.err || true
+            exit 0
+          fi
+          printf '%s' "$report" | node -e '
+            let raw = "";
+            process.stdin.on("data", c => (raw += c)).on("end", () => {
+              const report = JSON.parse(raw);
+              const counts = (report.metadata && report.metadata.vulnerabilities) || {};
+              console.log("npm audit:", JSON.stringify(counts));
+              const blocking = Object.entries(report.vulnerabilities || {})
+                .filter(([, v]) => v.severity === "high" || v.severity === "critical");
+              if (blocking.length === 0) process.exit(0);
+              console.log("\nHigh/critical:");
+              for (const [name, v] of blocking) {
+                console.log("  " + v.severity + "  " + name + "  " + (v.range || ""));
+              }
+              console.log("\nFix with `npm audit fix`, or `npm update <pkg>` when audit fix");
+              console.log("reports a fix as available but changes nothing.");
+              process.exit(1);
+            });
+          '
 
       - name: Lint (ESLint)
         run: npm run lint

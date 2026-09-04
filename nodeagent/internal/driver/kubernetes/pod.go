@@ -9,7 +9,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 
 	api "github.com/tavon-ai/proteos/nodeagent/api"
 	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
@@ -164,15 +163,26 @@ func (d *Driver) buildPod(spec driver.VMSpec, image string) *corev1.Pod {
 				// Readiness gates DialGuest: the driver refuses to tunnel to a
 				// pod whose guest-agent is not answering /healthz yet, which is
 				// what keeps a "running" machine actually attachable.
+				//
+				// EXEC, not httpGet, and deliberately so. An httpGet probe is
+				// performed by the kubelet from the NODE's address, which means
+				// the machine's NetworkPolicy would have to permit a second
+				// ingress peer on the very guest ports it exists to restrict to
+				// exactly one — and the node's address is not something a
+				// portable policy can name. Whether kubelet probe traffic is
+				// even subject to policy differs between CNIs, so an httpGet
+				// probe makes readiness a property of the CNI rather than of the
+				// guest. An exec probe runs through the CRI rather than the
+				// network: unaffected by policy, identical on every CNI, and it
+				// keeps the guest's network surface exactly "the cluster-agent,
+				// and nothing else".
 				ReadinessProbe: &corev1.Probe{
 					ProbeHandler: corev1.ProbeHandler{
-						HTTPGet: &corev1.HTTPGetAction{
-							Path: "/healthz",
-							Port: intstr.FromInt32(int32(api.GuestTerminalPort)),
-						},
+						Exec: &corev1.ExecAction{Command: healthzProbeCommand()},
 					},
 					InitialDelaySeconds: 1,
-					PeriodSeconds:       2,
+					PeriodSeconds:       3,
+					TimeoutSeconds:      3,
 					FailureThreshold:    30,
 				},
 				SecurityContext: &corev1.SecurityContext{
@@ -239,6 +249,17 @@ func resourceRequirements(spec driver.VMSpec) corev1.ResourceRequirements {
 		limits[k] = v
 	}
 	return corev1.ResourceRequirements{Requests: list, Limits: limits}
+}
+
+// healthzProbeCommand curls the guest-agent's own /healthz over loopback inside
+// the container. curl is part of the guest image's platform layer (both the
+// ext4 bake and the OCI build install it), and -m bounds it so a wedged agent
+// fails the probe rather than hanging it.
+func healthzProbeCommand() []string {
+	return []string{
+		"curl", "--fail", "--silent", "--show-error", "--max-time", "2",
+		"http://127.0.0.1:" + strconv.FormatUint(uint64(api.GuestTerminalPort), 10) + "/healthz",
+	}
 }
 
 func ptr[T any](v T) *T { return &v }

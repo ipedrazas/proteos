@@ -159,6 +159,21 @@ func (a *agent) destroy(t *testing.T, id string) {
 	resp.Body.Close()
 }
 
+// cleanup destroys the machine when the test passed, and deliberately LEAVES IT
+// when the test failed. A pod that never became ready is the only evidence of
+// why, and destroying it means e2e-kind.sh's dump — pods, describe, events —
+// prints nothing at all. The script only checks for leaked objects on a passing
+// run, so a machine left behind here never masquerades as a Destroy bug.
+func (a *agent) cleanup(t *testing.T, id string) {
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("test failed: leaving machine %s in the cluster for the post-mortem dump", id)
+			return
+		}
+		a.destroy(t, id)
+	})
+}
+
 // dialGuest opens the guest tunnel and returns the raw connection. This is the
 // same Upgrade the control-plane gateway performs; on 101 the connection becomes
 // an opaque byte stream to the machine's guest-agent, which here means a TCP
@@ -259,7 +274,7 @@ func tail(s string) string {
 func TestKindLifecycle(t *testing.T) {
 	a := newAgent(t)
 	const id = "e2e0kind-0000-4000-8000-000000000001"
-	t.Cleanup(func() { a.destroy(t, id) })
+	a.cleanup(t, id)
 
 	// A machine that has never existed is a 404, not an empty status.
 	if _, code := a.status(t, id); code != http.StatusNotFound {
@@ -343,7 +358,7 @@ func TestKindLifecycle(t *testing.T) {
 func TestKindPreviewForward(t *testing.T) {
 	a := newAgent(t)
 	const id = "e2e0kind-0000-4000-8000-000000000002"
-	t.Cleanup(func() { a.destroy(t, id) })
+	a.cleanup(t, id)
 
 	a.ensure(t, id)
 	a.waitState(t, id, api.StateRunning, bootTimeout)
@@ -382,7 +397,7 @@ func TestKindPreviewForward(t *testing.T) {
 func TestKindCapacity(t *testing.T) {
 	a := newAgent(t)
 	const id = "e2e0kind-0000-4000-8000-000000000003"
-	t.Cleanup(func() { a.destroy(t, id) })
+	a.cleanup(t, id)
 
 	a.ensure(t, id)
 	a.waitState(t, id, api.StateRunning, bootTimeout)
@@ -411,7 +426,7 @@ func TestKindCapacity(t *testing.T) {
 func TestKindListAndReattach(t *testing.T) {
 	a := newAgent(t)
 	const id = "e2e0kind-0000-4000-8000-000000000004"
-	t.Cleanup(func() { a.destroy(t, id) })
+	a.cleanup(t, id)
 
 	a.ensure(t, id)
 	a.waitState(t, id, api.StateRunning, bootTimeout)

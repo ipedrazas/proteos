@@ -151,6 +151,42 @@ func TestEnsureBuildsTheExpectedPod(t *testing.T) {
 	}
 }
 
+// The readiness probe must not be an httpGet. The kubelet performs those from
+// the node's address, so the machine's NetworkPolicy — whose whole job is to
+// permit exactly one ingress peer on the guest ports — would have to permit a
+// second one it cannot portably name. Worse, CNIs disagree about whether probe
+// traffic is subject to policy at all, which would make readiness a property of
+// the CNI rather than of the guest. An exec probe goes through the CRI instead.
+func TestReadinessProbeDoesNotCrossTheNetwork(t *testing.T) {
+	d, cluster := newDriver(t, 0)
+	ctx := context.Background()
+	const id = "aaaaaaaa-0000-4000-8000-00000000000a"
+
+	if _, err := d.EnsureRunning(ctx, spec(id)); err != nil {
+		t.Fatalf("EnsureRunning: %v", err)
+	}
+	pod, err := cluster.CoreV1().Pods(testNamespace).Get(ctx, "m-"+id, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+
+	probe := pod.Spec.Containers[0].ReadinessProbe
+	if probe == nil {
+		t.Fatal("no readiness probe: the driver would call a machine running before its guest-agent answers")
+	}
+	if probe.HTTPGet != nil {
+		t.Error("readiness is an httpGet probe: that needs the kubelet to reach a guest port, " +
+			"which the machine's NetworkPolicy restricts to the cluster-agent alone")
+	}
+	if probe.Exec == nil || len(probe.Exec.Command) == 0 {
+		t.Fatalf("want an exec probe, got %+v", probe.ProbeHandler)
+	}
+	joined := strings.Join(probe.Exec.Command, " ")
+	if !strings.Contains(joined, "127.0.0.1:1024/healthz") {
+		t.Errorf("exec probe does not check the guest-agent's own /healthz over loopback: %q", joined)
+	}
+}
+
 func TestEnsureCreatesThePVC(t *testing.T) {
 	d, cluster := newDriver(t, 0)
 	ctx := context.Background()
