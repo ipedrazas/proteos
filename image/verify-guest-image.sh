@@ -224,10 +224,12 @@ ok "port-preview forward bridges to an in-container loopback port"
 # nothing ever writes.
 log "starting sshd the way the pod's sidecar does"
 docker exec -d "$CID" /usr/local/bin/proteos-sshd || die "could not start proteos-sshd"
+# bash, not sh: /dev/tcp is a bash feature and the image's /bin/sh is dash, where
+# this probe fails no matter what sshd is doing.
 for i in $(seq 1 30); do
-  docker exec "$CID" sh -lc 'exec 3<>/dev/tcp/127.0.0.1/22' >/dev/null 2>&1 && break
+  docker exec "$CID" bash -lc 'exec 3<>/dev/tcp/127.0.0.1/22' >/dev/null 2>&1 && break
   sleep 1
-  [[ $i -eq 30 ]] && { docker exec "$CID" sh -lc 'cat /tmp/sshd.log 2>/dev/null' || true; die "sshd never listened on 127.0.0.1:22"; }
+  [[ $i -eq 30 ]] && { docker logs "$CID" 2>&1 | tail -20; die "sshd never listened on 127.0.0.1:22"; }
 done
 ok "sshd listening on 127.0.0.1:22"
 
