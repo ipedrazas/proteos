@@ -488,9 +488,7 @@ func TestKindSSH(t *testing.T) {
 	// fingerprint, restart, and take it again: an image-baked key would make
 	// every machine identical, and an ephemeral one would change here and greet
 	// the user with a host-key warning on every boot.
-	out = runInGuest(t, ws,
-		`ssh-keygen -lf /persist/ssh_host_keys/ssh_host_ed25519_key.pub | awk '{print "FP:" $2}'; `+echoMarker("FP-1"),
-		"FP-1", 60*time.Second)
+	out = runInGuest(t, ws, hostKeyFingerprintCmd+echoMarker("FP-1"), "FP-1", 60*time.Second)
 	before := fingerprint(t, out)
 	ws.Close()
 	tunnel.Close()
@@ -504,9 +502,7 @@ func TestKindSSH(t *testing.T) {
 	ws2, tunnel2 := a.terminal(t, id, "ssh-after-restart")
 	defer tunnel2.Close()
 	defer ws2.Close()
-	out = runInGuest(t, ws2,
-		`ssh-keygen -lf /persist/ssh_host_keys/ssh_host_ed25519_key.pub | awk '{print "FP:" $2}'; `+echoMarker("FP-2"),
-		"FP-2", 60*time.Second)
+	out = runInGuest(t, ws2, hostKeyFingerprintCmd+echoMarker("FP-2"), "FP-2", 60*time.Second)
 	if after := fingerprint(t, out); after != before {
 		t.Errorf("host key changed across a restart (%s -> %s); every reconnect would warn the user", before, after)
 	}
@@ -541,17 +537,28 @@ func waitForSSHBanner(t *testing.T, a *agent, id string, timeout time.Duration) 
 	return ""
 }
 
-// fingerprint pulls the FP: line runInGuest's output carries. It fails the test
-// rather than returning an empty string, so a mis-parsed line cannot make the
-// before/after comparison trivially pass.
+// hostKeyFingerprintCmd prints the machine's ed25519 host key fingerprint tagged
+// with FP:, written so that the tag does NOT appear literally in the command —
+// awk concatenates "F" and "P:" at run time. Same reason echoMarker splits its
+// marker: a PTY echoes what is typed into it, so a command containing its own
+// tag is matched against the echo rather than the output, and the assertion
+// compares the command with itself. (It did, on the first run of this test:
+// "before" and "after" were both a fragment of the awk program.)
+const hostKeyFingerprintCmd = `ssh-keygen -lf /persist/ssh_host_keys/ssh_host_ed25519_key.pub | awk '{print "F" "P:" $2}'; `
+
+// fingerprint pulls the tagged fingerprint out of a PTY buffer. It insists on a
+// SHA256: value and fails the test otherwise, so no other line — an echo, a
+// prompt, an error — can be mistaken for one and make the before/after
+// comparison trivially true.
 func fingerprint(t *testing.T, out string) string {
 	t.Helper()
 	for _, line := range strings.Split(out, "\n") {
-		if i := strings.Index(line, "FP:"); i >= 0 {
-			fp := strings.TrimSpace(line[i+len("FP:"):])
-			if len(fp) > 10 {
-				return fp
-			}
+		i := strings.Index(line, "FP:")
+		if i < 0 {
+			continue
+		}
+		if fp := strings.TrimSpace(line[i+len("FP:"):]); strings.HasPrefix(fp, "SHA256:") {
+			return fp
 		}
 	}
 	t.Fatalf("no host key fingerprint in guest output: %q", tail(out))
