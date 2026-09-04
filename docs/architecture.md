@@ -60,8 +60,13 @@ browser ──► TLS proxy ──► web (nginx) ──► control plane ──
   per-machine / per-port subdomains through the gateway, so there is no
   unauthenticated path into a guest.
 - **Pluggable VM driver.** The node-agent has a `dev` driver (default, no KVM —
-  used for local development and most CI) and a `firecracker` driver behind a
-  build tag (real microVMs, exercised only on KVM hosts).
+  used for local development and most CI), a `firecracker` driver behind a build
+  tag (real microVMs, exercised only on KVM hosts), and a `kubernetes` driver
+  that runs each machine as a Pod. All three satisfy one `driver.Driver`
+  interface and are held to one shared contract suite
+  (`nodeagent/internal/driver/conformance`), which is why nothing above the
+  driver seam — the guest tunnel, the gateway, the poller, the SPA — knows which
+  backend a machine is on.
 - **Agent-first CLI.** `proteos` is built to be driven by a coding agent or CI as
   much as by a human, mirroring the same control-plane API the web UI uses.
 
@@ -71,6 +76,24 @@ browser ──► TLS proxy ──► web (nginx) ──► control plane ──
   React Query cache, and the terminal transport; only the presentation differs.
   The session cookie + CSRF model requires the SPA and API to share one origin,
   which is why they are one app rather than separate deployments.
+
+## Backends
+
+A fleet can mix backends; the control plane sees each one as a host row.
+
+| | `firecracker` | `kubernetes` |
+| --- | --- | --- |
+| A machine is | a microVM with its own kernel | a Pod + PVC + NetworkPolicy |
+| The agent runs | natively as root on a KVM host | as a Deployment inside the cluster ("cluster-agent") |
+| Guest transport | vsock | TCP to the pod IP, on the same guest ports |
+| Guest image | a baked ext4 (`image/build-rootfs.sh`) | an OCI image (`image/guest.Dockerfile`) |
+| Stop | hibernate: RAM snapshot, resume | poweroff: the volume is kept, the machine boots cold |
+| Isolation | the microVM boundary | a sandboxed RuntimeClass (gVisor/Kata) + NetworkPolicy |
+
+The Kubernetes backend trades the microVM boundary for cluster-native placement,
+storage and scaling. That trade is real and is spelled out in
+[SECURITY.md](../SECURITY.md); operator setup is in
+[`deploy/kubernetes/`](../deploy/kubernetes/README.md).
 
 ## Control-plane internals
 

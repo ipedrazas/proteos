@@ -304,6 +304,36 @@ tasks:
     cmds:
       - go run ./cmd/nodeagent
 
+  na:image:
+    desc: "Node-agent: build the cluster-agent container image (kubernetes driver)"
+    cmds:
+      - docker build -f deploy/node-agent/node-agent.Dockerfile -t {{.NA_IMAGE}} .
+    vars:
+      NA_IMAGE: '{{.NA_IMAGE | default "proteos-node-agent:dev"}}'
+
+  # ---------------------------------------------------------------------------
+  # Guest image (OCI) — ./image/guest.Dockerfile (the Kubernetes backend's guest)
+  # ---------------------------------------------------------------------------
+
+  image:guest:
+    desc: "Guest image: build one template (TEMPLATE=base|go|node|python|full)"
+    cmds:
+      - >-
+        docker build -f image/guest.Dockerfile
+        --build-arg TEMPLATE={{.TEMPLATE}}
+        --build-arg GUESTAGENT_VERSION=ga-$(git rev-parse --short HEAD)
+        -t {{.GUEST_IMAGE}} .
+    vars:
+      TEMPLATE: '{{.TEMPLATE | default "base"}}'
+      GUEST_IMAGE: '{{.GUEST_IMAGE | default "proteos-guest:base-dev"}}'
+
+  image:guest:verify:
+    desc: "Guest image: build it and run the acceptance checks (needs docker + python3)"
+    cmds:
+      - image/verify-guest-image.sh --build --template {{.TEMPLATE}}
+    vars:
+      TEMPLATE: '{{.TEMPLATE | default "base"}}'
+
   # ---------------------------------------------------------------------------
   # Guest-agent (Go) — ./guestagent (runs inside the firecracker VM)
   # ---------------------------------------------------------------------------

@@ -1,0 +1,90 @@
+# The cluster-agent's permissions, deliberately small: it manages machine
+# objects in ONE namespace, and reads nodes cluster-wide only to synthesize the
+# capacity figure the control-plane scheduler ranks hosts by.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: proteos-cluster-agent
+  namespace: proteos-system
+  labels:
+    app.kubernetes.io/name: proteos-cluster-agent
+    app.kubernetes.io/part-of: proteos
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: proteos-cluster-agent
+  namespace: proteos-machines
+  labels:
+    app.kubernetes.io/part-of: proteos
+rules:
+  # Machine pods: the driver creates them, watches their phase, and deletes them
+  # on stop/destroy. No `update`: a running pod's spec is immutable anyway, and
+  # a spec change takes effect on the next boot.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [""]
+    resources: [pods/status]
+    verbs: [get]
+  # Machine volumes. Kept across a stop, deleted only on destroy.
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get, list, watch, create, delete]
+  # Per-machine network policy. `update` IS needed here: the policy is rewritten
+  # on every ensure, which is how a policy change reaches an existing machine.
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, list, watch, create, update, delete]
+  # Read-back of events for diagnosing a pod that will not schedule.
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: proteos-cluster-agent
+  namespace: proteos-machines
+  labels:
+    app.kubernetes.io/part-of: proteos
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: proteos-cluster-agent
+subjects:
+  - kind: ServiceAccount
+    name: proteos-cluster-agent
+    namespace: proteos-system
+---
+# Cluster-scoped, and read-only: nodes for the capacity sum, runtimeclasses so
+# the startup preflight can tell "the sandbox is not installed" from "the
+# sandbox is fine".
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: proteos-cluster-agent
+  labels:
+    app.kubernetes.io/part-of: proteos
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list]
+  - apiGroups: [node.k8s.io]
+    resources: [runtimeclasses]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: proteos-cluster-agent
+  labels:
+    app.kubernetes.io/part-of: proteos
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: proteos-cluster-agent
+subjects:
+  - kind: ServiceAccount
+    name: proteos-cluster-agent
+    namespace: proteos-system
