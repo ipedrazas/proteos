@@ -101,6 +101,13 @@ spec:
             - name: tls
               mountPath: /etc/proteos/tls
               readOnly: true
+            # readOnlyRootFilesystem is true below, so give the process a
+            # writable temp dir rather than relying on it never wanting one.
+            # Nothing persistent goes here: with the kubernetes driver the API
+            # server is the record and the agent keeps no local state — which is
+            # what makes a read-only root possible at all.
+            - name: tmp
+              mountPath: /tmp
           readinessProbe:
             httpGet:
               path: /healthz
@@ -128,6 +135,8 @@ spec:
             capabilities:
               drop: [ALL]
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: tls
           secret:
             secretName: proteos-cluster-agent
