@@ -111,9 +111,15 @@ if [[ $BUILD -eq 1 ]]; then
     -t "$GUEST_IMAGE" "$REPO_ROOT" >/dev/null || die "guest image build failed"
 fi
 
-log "loading images into the kind node"
-kind load docker-image "$AGENT_IMAGE" --name "$CLUSTER" >/dev/null
-kind load docker-image "$GUEST_IMAGE" --name "$CLUSTER" >/dev/null
+# `kind load` writes each image out as a tar and then imports it into the node's
+# containerd, so it briefly needs about three copies of the guest image (~2.7 GB)
+# on disk. When that runs out the error is an unhelpful "no space left on
+# device" from `docker save`, so report the headroom first.
+log "loading images into the kind node (free disk: $(df -h / | awk 'NR==2 {print $4}'))"
+kind load docker-image "$AGENT_IMAGE" --name "$CLUSTER" >/dev/null \
+  || die "kind load of $AGENT_IMAGE failed (out of disk?): $(df -h / | awk 'NR==2 {print $4}') free"
+kind load docker-image "$GUEST_IMAGE" --name "$CLUSTER" >/dev/null \
+  || die "kind load of $GUEST_IMAGE failed (out of disk?): $(df -h / | awk 'NR==2 {print $4}') free"
 ok "images loaded"
 
 # --- 3. the secret ----------------------------------------------------------

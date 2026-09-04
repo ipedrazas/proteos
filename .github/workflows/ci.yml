@@ -184,6 +184,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The guest image is ~2.7 GB (Ubuntu + Node + code-server + Claude), and
+      # `kind load docker-image` writes it out as a tar and then imports it into
+      # the node's containerd — so the job needs roughly three copies on disk at
+      # once. A stock runner does not have that spare, and the failure mode is an
+      # unhelpful "no space left on device" from `docker save`. Reclaim the
+      # preinstalled toolchains we do not use.
+      #
+      # Runs BEFORE setup-go: the Go toolchain lands in the hosted tool cache,
+      # which is why that directory is deliberately left alone.
+      - name: Free disk space
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /usr/share/swift /usr/local/share/powershell || true
+          docker image prune -af >/dev/null 2>&1 || true
+          echo "after reclaim:"
+          df -h / | tail -1
+
       - uses: actions/setup-go@v7
         with:
           go-version-file: nodeagent/go.mod
