@@ -8,7 +8,7 @@ require (
 	github.com/mdlayher/vsock v1.3.0
 	github.com/prometheus/client_golang v1.24.1
 	golang.org/x/sys v0.47.0
-	modernc.org/sqlite v1.56.0
+	modernc.org/sqlite v1.57.0
 )
 
 require (
