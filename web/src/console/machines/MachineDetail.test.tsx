@@ -28,6 +28,7 @@ function machine(over: Partial<MachineSummary> = {}): MachineSummary {
     disk_id: 'disk-1',
     disk_mib: 10240,
     snapshot: null,
+    backend: 'firecracker',
     ...over,
   };
 }
@@ -146,6 +147,21 @@ describe('MachineDetail', () => {
     ]);
     expect(c.textContent).toContain('4 GiB of memory');
     expect(c.textContent).toContain('1.7.0');
+  });
+
+  it('names the backend a machine runs on', () => {
+    expect(render([machine()]).textContent).toContain('Firecracker microVM');
+    expect(render([machine({ backend: 'kubernetes' })]).textContent).toContain('Kubernetes pod');
+  });
+
+  it('does not offer a snapshot a Kubernetes machine can never have', () => {
+    // A pod has no RAM to snapshot. An empty "Snapshot: none" row would read as
+    // "not yet" — a state this machine could reach — so the row is absent, and
+    // the boot line says what stopping actually does instead.
+    const c = render([machine({ backend: 'kubernetes' })]);
+    expect(c.textContent).not.toContain('Snapshot');
+    expect(c.textContent).not.toContain('will cold boot');
+    expect(c.textContent).toContain('powers this machine off');
   });
 
   it('marks a machine with no address rather than leaving the field blank', () => {

@@ -1,6 +1,22 @@
 import type { MachineSummary } from '../../api/client';
 import { formatAge, formatTimestamp, gib } from '../../lib/format';
 
+// backendLabel names the backend a machine runs on. The distinction matters to
+// the reader of this panel and nowhere else in the console: it is why a machine
+// has no snapshot and never will (K3).
+function backendLabel(backend: MachineSummary['backend']): string {
+  switch (backend) {
+    case 'kubernetes':
+      return 'Kubernetes pod';
+    case 'firecracker':
+      return 'Firecracker microVM';
+    case 'dev':
+      return 'Development stub';
+    default:
+      return '—';
+  }
+}
+
 // OverviewTab is everything the control plane already knows about one machine.
 //
 // MachineSummary has carried these fields to the browser since Phase 4 and no
@@ -9,9 +25,16 @@ import { formatAge, formatTimestamp, gib } from '../../lib/format';
 // invisible today: a "Stopped" machine with a snapshot resumes from memory
 // rather than cold-booting, which is a materially different thing to press
 // Start on, and until now nothing said so.
+//
+// K3 adds the other half of that: a machine on a Kubernetes host never
+// hibernates at all, so the snapshot row is hidden rather than shown empty.
 export function OverviewTab({ machine }: { machine: MachineSummary }) {
   const spec = machine.resource_spec;
   const created = Date.parse(machine.created_at);
+  // A pod has no RAM to snapshot and restore, so a Kubernetes machine stops by
+  // powering off and always cold boots. Showing it an empty "Snapshot" row would
+  // read as "none yet" — a state it could reach — rather than "never".
+  const hibernates = machine.backend !== 'kubernetes';
 
   return (
     <>
@@ -36,6 +59,8 @@ export function OverviewTab({ machine }: { machine: MachineSummary }) {
           <dd>{gib(machine.disk_mib ?? spec.disk_mib)}</dd>
           <dt>Address</dt>
           <dd>{machine.guest_ip ?? <span className="c-muted">— (assigned while running)</span>}</dd>
+          <dt>Backend</dt>
+          <dd>{backendLabel(machine.backend)}</dd>
         </dl>
       </div>
 
@@ -49,23 +74,32 @@ export function OverviewTab({ machine }: { machine: MachineSummary }) {
             {machine.boot === 'resumed' ? (
               'Resumed from snapshot'
             ) : machine.boot === 'cold' ? (
-              'Cold boot'
+              <>
+                Cold boot
+                {!hibernates && (
+                  <span className="c-muted"> · stopping powers this machine off</span>
+                )}
+              </>
             ) : (
               <span className="c-muted">— (not booted yet)</span>
             )}
           </dd>
-          <dt>Snapshot</dt>
-          <dd>
-            {machine.snapshot ? (
-              <>
-                {gib(Math.round(machine.snapshot.mem_bytes / (1024 * 1024)))} of memory, taken{' '}
-                {formatTimestamp(machine.snapshot.created_at)}
-                <span className="c-muted"> · Firecracker {machine.snapshot.fc_version}</span>
-              </>
-            ) : (
-              <span className="c-muted">None — this machine will cold boot</span>
-            )}
-          </dd>
+          {hibernates && (
+            <>
+              <dt>Snapshot</dt>
+              <dd>
+                {machine.snapshot ? (
+                  <>
+                    {gib(Math.round(machine.snapshot.mem_bytes / (1024 * 1024)))} of memory, taken{' '}
+                    {formatTimestamp(machine.snapshot.created_at)}
+                    <span className="c-muted"> · Firecracker {machine.snapshot.fc_version}</span>
+                  </>
+                ) : (
+                  <span className="c-muted">None — this machine will cold boot</span>
+                )}
+              </dd>
+            </>
+          )}
         </dl>
       </div>
 

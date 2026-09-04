@@ -16,7 +16,8 @@ func clearEnv(t *testing.T) {
 		"PROTEOS_GIT_HOST", "PROTEOS_GIT_PUBLIC_HOSTS", "PROTEOS_SECRETS_BACKEND", "PROTEOS_SECRETS_FILE",
 		"PROTEOS_OPENBAO_ADDR", "PROTEOS_OPENBAO_MOUNT", "PROTEOS_OPENBAO_PREFIX", "PROTEOS_OPENBAO_ROLE_ID",
 		"PROTEOS_OPENBAO_SECRET_ID_FILE", "ALLOWED_GITHUB_LOGINS", "PROTEOS_COOKIE_SECURE",
-		"PROTEOS_HOST_NAME", "PROTEOS_NODE_AGENT_URL", "PROTEOS_AGENT_TOKEN", "PROTEOS_NODE_AGENT_INSECURE_HTTP",
+		"PROTEOS_HOST_NAME", "PROTEOS_HOST_DRIVER", "PROTEOS_NODE_AGENT_URL", "PROTEOS_AGENT_TOKEN",
+		"PROTEOS_NODE_AGENT_INSECURE_HTTP", "PROTEOS_IMAGE_REF",
 		"PROTEOS_NODE_CA_FILE", "PROTEOS_HOSTS", "PROTEOS_MACHINE_VCPUS", "PROTEOS_MACHINE_MEM_MIB",
 		"PROTEOS_MACHINE_DISK_MIB", "PROTEOS_KERNEL_REF", "PROTEOS_ROOTFS_REF",
 		"PROTEOS_MACHINE_DOMAIN", "PROTEOS_STATE_KEY",
@@ -311,6 +312,43 @@ func TestLoadAdditionalHostsRequiresHTTPS(t *testing.T) {
 	t.Setenv("PROTEOS_NODE_AGENT_INSECURE_HTTP", "1")
 	if _, err := Load(); err != nil {
 		t.Fatalf("Load with insecure opt-out should succeed: %v", err)
+	}
+}
+
+// K3: a host entry says which backend its agent runs. Omitted means firecracker
+// — what every PROTEOS_HOSTS value written before K3 meant.
+func TestLoadHostDrivers(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("PROTEOS_HOSTS", `[{"name":"gpu-1","url":"https://gpu-1.internal:9090"},`+
+		`{"name":"k8s-eu","url":"https://cluster-agent.internal:9090","driver":"kubernetes"}]`)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.HostDriver != "firecracker" {
+		t.Errorf("primary HostDriver = %q, want firecracker by default", c.HostDriver)
+	}
+	if c.AdditionalHosts[0].Driver != "firecracker" {
+		t.Errorf("omitted driver = %q, want firecracker", c.AdditionalHosts[0].Driver)
+	}
+	if c.AdditionalHosts[1].Driver != "kubernetes" {
+		t.Errorf("driver = %q, want kubernetes", c.AdditionalHosts[1].Driver)
+	}
+}
+
+// A typo'd kind is rejected at load, where it reads as the configuration error
+// it is, rather than at seed time as a database constraint violation.
+func TestLoadRejectsUnknownHostDriver(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("PROTEOS_HOST_DRIVER", "kubernets")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load should reject an unknown PROTEOS_HOST_DRIVER")
+	}
+
+	clearEnv(t)
+	t.Setenv("PROTEOS_HOSTS", `[{"name":"k8s-eu","url":"https://a.internal:9090","driver":"k8s"}]`)
+	if _, err := Load(); err == nil {
+		t.Fatal("Load should reject an unknown driver in PROTEOS_HOSTS")
 	}
 }
 

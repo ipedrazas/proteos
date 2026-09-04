@@ -244,13 +244,12 @@ func (d *Driver) EnsureRunning(ctx context.Context, spec driver.VMSpec) (string,
 			"encryption at rest is the StorageClass's responsibility (see SECURITY.md)",
 			"machine", spec.MachineID)
 	}
+	// The control plane sends image_ref for a machine created from a template
+	// that carries one (K3); DefaultImage is the operator's fallback for a fleet
+	// whose control plane has no image configured at all. rootfs_ref is NOT a
+	// fallback: it names an ext4 filesystem, and pulling it as an OCI reference
+	// would fail later and less clearly than refusing here.
 	image := spec.ImageRef
-	if image == "" {
-		// Tracer-bullet fallback: before K3 lands image_ref, a kind-based e2e
-		// puts the image reference in rootfs_ref. A configured DefaultImage wins
-		// over neither — it is the last resort.
-		image = spec.RootfsRef
-	}
 	if image == "" {
 		image = d.cfg.DefaultImage
 	}

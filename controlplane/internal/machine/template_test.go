@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
 )
 
 func validTemplates() []Template {
@@ -52,7 +54,7 @@ func TestNewCatalog_Validation(t *testing.T) {
 			{ID: "a", RootfsRef: "r", Defaults: Resources{1, 1, 1}},
 			{ID: "a", RootfsRef: "r2", Defaults: Resources{1, 1, 1}},
 		}, "k"},
-		{"missing rootfs", []Template{{ID: "a", Defaults: Resources{1, 1, 1}}}, "k"},
+		{"no image of either kind", []Template{{ID: "a", Defaults: Resources{1, 1, 1}}}, "k"},
 		{"no kernel anywhere", []Template{{ID: "a", RootfsRef: "r", Defaults: Resources{1, 1, 1}}}, ""},
 		{"non-positive defaults", []Template{{ID: "a", RootfsRef: "r", Defaults: Resources{0, 1, 1}}}, "k"},
 	}
@@ -66,13 +68,72 @@ func TestNewCatalog_Validation(t *testing.T) {
 }
 
 func TestSingleTemplateCatalog(t *testing.T) {
-	c, err := SingleTemplateCatalog("rootfs.ext4", "vmlinux-6.1", Resources{Vcpus: 2, MemMiB: 2048, DiskMiB: 10240})
+	c, err := SingleTemplateCatalog("rootfs.ext4", "vmlinux-6.1", "ghcr.io/tavon-ai/proteos-guest:base",
+		Resources{Vcpus: 2, MemMiB: 2048, DiskMiB: 10240})
 	if err != nil {
 		t.Fatalf("SingleTemplateCatalog: %v", err)
 	}
 	d := c.Default()
 	if d.ID != "base" || d.RootfsRef != "rootfs.ext4" || d.KernelRef != "vmlinux-6.1" {
 		t.Fatalf("unexpected base template: %+v", d)
+	}
+	// K3: the same fallback template serves both backends when both refs are set.
+	if d.ImageRef != "ghcr.io/tavon-ai/proteos-guest:base" {
+		t.Fatalf("image_ref not carried: %+v", d)
+	}
+	if got := d.SupportedDrivers(); len(got) != 3 {
+		t.Fatalf("want a template placeable on every backend, got %v", got)
+	}
+}
+
+// K3: which refs a template carries decides which hosts it can be placed on. An
+// ext4 rootfs is not an OCI image and neither backend can boot the other's, so
+// this mapping is the whole of the scheduler's placement rule.
+func TestTemplateSupportsDriver(t *testing.T) {
+	fc := Template{ID: "fc", RootfsRef: "r.ext4", KernelRef: "k"}
+	k8s := Template{ID: "k8s", ImageRef: "ghcr.io/x/guest:base"}
+	both := Template{ID: "both", RootfsRef: "r.ext4", KernelRef: "k", ImageRef: "ghcr.io/x/guest:base"}
+
+	cases := []struct {
+		tmpl   Template
+		driver string
+		want   bool
+	}{
+		{fc, agentapi.DriverFirecracker, true},
+		{fc, agentapi.DriverDev, true},
+		{fc, agentapi.DriverKubernetes, false},
+		{k8s, agentapi.DriverKubernetes, true},
+		{k8s, agentapi.DriverFirecracker, false},
+		{k8s, agentapi.DriverDev, false},
+		{both, agentapi.DriverFirecracker, true},
+		{both, agentapi.DriverKubernetes, true},
+		// A kind this build has no meaning for supports nothing: the database is
+		// ahead of the binary and guessing is worse than not scheduling.
+		{both, "xen", false},
+	}
+	for _, tc := range cases {
+		if got := tc.tmpl.SupportsDriver(tc.driver); got != tc.want {
+			t.Errorf("template %q SupportsDriver(%q) = %v, want %v", tc.tmpl.ID, tc.driver, got, tc.want)
+		}
+	}
+
+	if got := k8s.SupportedDrivers(); len(got) != 1 || got[0] != agentapi.DriverKubernetes {
+		t.Errorf("k8s-only template drivers = %v", got)
+	}
+}
+
+// An image-only template needs no kernel: there is nothing to boot it with on a
+// cluster, and requiring one would force operators to invent a kernel ref for a
+// Kubernetes-only fleet.
+func TestCatalogAcceptsImageOnlyTemplateWithoutKernel(t *testing.T) {
+	c, err := NewCatalog([]Template{{
+		ID: "base", ImageRef: "ghcr.io/x/guest:base", Defaults: Resources{1, 1024, 5120},
+	}}, "")
+	if err != nil {
+		t.Fatalf("NewCatalog: %v", err)
+	}
+	if d := c.Default(); d.KernelRef != "" {
+		t.Fatalf("no kernel should have been filled in: %+v", d)
 	}
 }
 

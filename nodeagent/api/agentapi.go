@@ -148,6 +148,39 @@ const (
 	BootResumed = "resumed"
 )
 
+// Driver kinds: the backend a node-agent runs machines on, selected per agent by
+// PROTEOS_AGENT_DRIVER. They are part of the fleet's shared vocabulary rather
+// than a node-agent-private detail, because the control plane records the kind
+// per host (hosts.driver) to decide what a host can be asked to do: only a
+// firecracker host can hibernate, and only a kubernetes host can boot an OCI
+// image. Keep in sync with buildDriver in nodeagent/cmd/nodeagent/main.go and
+// with the hosts.driver CHECK constraint.
+const (
+	DriverDev         = "dev"
+	DriverFirecracker = "firecracker"
+	DriverKubernetes  = "kubernetes"
+)
+
+// DriverSupportsHibernate reports whether a host running this driver can honour
+// StopModeHibernate. A pod has no RAM to snapshot and restore, so the kubernetes
+// driver accepts hibernate but performs a poweroff; the control plane asks this
+// first and sends StopModePoweroff instead, so a machine's recorded state
+// matches what actually happened to it.
+func DriverSupportsHibernate(kind string) bool {
+	switch kind {
+	case DriverFirecracker, DriverDev:
+		return true
+	default:
+		return false
+	}
+}
+
+// DriverBootsImage reports whether this driver boots an OCI image (ImageRef)
+// rather than a kernel + rootfs pair (KernelRef/RootfsRef). It is what makes a
+// template placeable on a host: the two image families are not interchangeable
+// and neither driver can boot the other's.
+func DriverBootsImage(kind string) bool { return kind == DriverKubernetes }
+
 // Network policy modes (TAV-116): the wire contract's four network-policy
 // shapes, shared verbatim between the control plane (which owns the policy in
 // Postgres) and the node-agent (which enforces it via nft rules on the

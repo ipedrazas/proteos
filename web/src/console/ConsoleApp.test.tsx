@@ -51,6 +51,7 @@ const MACHINE = {
   disk_id: null,
   disk_mib: null,
   snapshot: null,
+  backend: 'firecracker' as const,
 };
 
 function makeMe(overrides: Partial<Me> = {}): Me {

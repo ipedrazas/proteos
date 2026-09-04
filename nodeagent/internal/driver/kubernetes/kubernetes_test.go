@@ -274,25 +274,21 @@ func TestEnsureWithoutAnImageIsAnError(t *testing.T) {
 	}
 }
 
-// A firecracker-shaped template reaching a kubernetes host during the tracer
-// bullet still boots: rootfs_ref stands in for image_ref until K3 lands.
-func TestRootfsRefIsAcceptedAsAnImageFallback(t *testing.T) {
-	d, cluster := newDriver(t, 0)
-	ctx := context.Background()
+// A firecracker-shaped template reaching a kubernetes host is refused, not
+// approximated: rootfs_ref names an ext4 filesystem, so treating it as an image
+// reference would turn a placement mistake into an ImagePullBackOff. Since K3
+// the control plane will not place such a template here at all — this is the
+// backstop for a machine row that predates that (or a hand-made request).
+func TestRootfsRefIsNotAnImageFallback(t *testing.T) {
+	d, _ := newDriver(t, 0)
 	const id = "aaaaaaaa-0000-4000-8000-000000000004"
 
 	s := spec(id)
 	s.ImageRef = ""
 	s.RootfsRef = testImage
-	if _, err := d.EnsureRunning(ctx, s); err != nil {
-		t.Fatalf("EnsureRunning: %v", err)
-	}
-	pod, err := cluster.CoreV1().Pods(testNamespace).Get(ctx, "m-"+id, metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("get pod: %v", err)
-	}
-	if pod.Spec.Containers[0].Image != testImage {
-		t.Errorf("image = %q, want the rootfs_ref fallback %q", pod.Spec.Containers[0].Image, testImage)
+	_, err := d.EnsureRunning(context.Background(), s)
+	if !errors.Is(err, driver.ErrBadSpec) {
+		t.Fatalf("err = %v, want driver.ErrBadSpec", err)
 	}
 }
 

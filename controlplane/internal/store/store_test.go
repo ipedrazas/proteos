@@ -125,6 +125,52 @@ func TestUpsertGitHubLinkStoresOnlyRef(t *testing.T) {
 	}
 }
 
+// K3: hosts carry the backend their node-agent runs. An omitted driver means
+// the pre-K3 behaviour (firecracker), a named one is stored verbatim, and a kind
+// the schema does not know is refused rather than silently stored — the control
+// plane reads this column to decide placement and stop mode, so an unrecognised
+// value would make a host unschedulable in a way nothing explains.
+func TestUpsertHostDriver(t *testing.T) {
+	_, q := testutil.Postgres(t)
+	ctx := context.Background()
+
+	h, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{Name: "legacy", AgentUrl: "http://a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Driver != "firecracker" {
+		t.Fatalf("driver = %q, want the firecracker default", h.Driver)
+	}
+
+	k8s, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{
+		Name: "cluster", AgentUrl: "http://b", Driver: "kubernetes",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k8s.Driver != "kubernetes" {
+		t.Fatalf("driver = %q, want kubernetes", k8s.Driver)
+	}
+
+	// Re-seeding a name re-points both its agent URL and its kind, so an
+	// operator can convert a host in one restart.
+	again, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{
+		Name: "legacy", AgentUrl: "http://c", Driver: "kubernetes",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ID != h.ID || again.Driver != "kubernetes" || again.AgentUrl != "http://c" {
+		t.Fatalf("re-seed did not update in place: %+v", again)
+	}
+
+	if _, err := q.UpsertHostByName(ctx, store.UpsertHostByNameParams{
+		Name: "bogus", AgentUrl: "http://d", Driver: "xen",
+	}); err == nil {
+		t.Fatal("expected the driver CHECK constraint to reject an unknown kind")
+	}
+}
+
 func TestMigrateDownUp(t *testing.T) {
 	// Verifies migrations are reversible: down to zero, then back up clean.
 	url := testutil.DatabaseURL(t)

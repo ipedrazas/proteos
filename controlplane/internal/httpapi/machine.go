@@ -35,6 +35,13 @@ type MachineSummary struct {
 	DiskID   *string          `json:"disk_id"`  // null if not yet provisioned
 	DiskMiB  *int             `json:"disk_mib"` // attached disk size
 	Snapshot *SnapshotSummary `json:"snapshot"` // present only when hibernated
+
+	// Backend (K3) is the driver kind of the host this machine runs on:
+	// "firecracker" | "kubernetes" | "dev". It is what tells the browser that a
+	// machine cannot hibernate and will never have a snapshot — properties of
+	// the backend, not of the machine's current state. Empty only when the host
+	// row could not be read.
+	Backend string `json:"backend"`
 }
 
 // SnapshotSummary is the current hibernation snapshot metadata in the API.
@@ -45,9 +52,11 @@ type SnapshotSummary struct {
 }
 
 // toSummary renders a store.Machine (plus its optional disk + snapshot) as the
-// API summary. disk/snap may be nil when absent.
-func toSummary(m store.Machine, disk *store.Disk, snap *store.Snapshot) MachineSummary {
+// API summary. disk/snap may be nil when absent; backend is the machine's host
+// driver kind, empty when unknown.
+func toSummary(m store.Machine, disk *store.Disk, snap *store.Snapshot, backend string) MachineSummary {
 	s := MachineSummary{
+		Backend:      backend,
 		ID:           machine.UUIDString(m.ID),
 		Name:         m.Name,
 		State:        m.State,
@@ -96,12 +105,37 @@ func (s *Server) summary(ctx context.Context, m store.Machine) MachineSummary {
 	if err != nil {
 		snap = nil
 	}
-	return toSummary(m, disk, snap)
+	return toSummary(m, disk, snap, s.backendFor(ctx, m))
+}
+
+// backendFor resolves one machine's host driver kind (K3). Best-effort like the
+// disk/snapshot lookups above: an unresolvable host yields an empty backend,
+// which the SPA reads as "assume the classic behaviour" rather than as an error
+// worth failing the whole response over.
+func (s *Server) backendFor(ctx context.Context, m store.Machine) string {
+	host, err := s.Machines.HostFor(ctx, m.ID)
+	if err != nil || host == nil {
+		return ""
+	}
+	return host.Driver
+}
+
+// backends maps host id → driver kind (K3) for rendering MachineSummary.Backend
+// across a batch of machines: one query for the whole (small) hosts table rather
+// than one per machine. Best-effort, like backendFor.
+func (s *Server) backends(ctx context.Context) map[pgtype.UUID]string {
+	drivers, err := s.Machines.HostDrivers(ctx)
+	if err != nil {
+		slog.Warn("summary: host driver lookup failed", "err", err)
+		return nil
+	}
+	return drivers
 }
 
 // summaries renders a batch of machines as API summaries, loading every
 // machine's disk + snapshot in two queries total instead of two per machine
-// (the N+1 that used to back the machine list and SSE snapshot). Lookups are
+// (the N+1 that used to back the machine list and SSE snapshot) plus one for the
+// host drivers behind every machine's backend. Lookups are
 // best-effort like summary: a batch error degrades to summaries without that
 // field rather than failing the whole response.
 func (s *Server) summaries(ctx context.Context, ms []store.Machine) []MachineSummary {
@@ -117,6 +151,7 @@ func (s *Server) summaries(ctx context.Context, ms []store.Machine) []MachineSum
 	if err != nil {
 		snaps = nil
 	}
+	drivers := s.backends(ctx)
 	out := make([]MachineSummary, 0, len(ms))
 	for _, m := range ms {
 		var disk *store.Disk
@@ -127,7 +162,7 @@ func (s *Server) summaries(ctx context.Context, ms []store.Machine) []MachineSum
 		if sn, ok := snaps[m.ID]; ok {
 			snap = &sn
 		}
-		out = append(out, toSummary(m, disk, snap))
+		out = append(out, toSummary(m, disk, snap, drivers[m.HostID]))
 	}
 	return out
 }
