@@ -167,6 +167,58 @@ jobs:
       - name: Verify the guest image
         run: image/verify-guest-image.sh --image proteos-guest:base-ci
 
+  # The Kubernetes backend against a REAL cluster. The kubernetes driver's unit
+  # tests run against client-go's fake clientset, which is a plain object store:
+  # it cannot schedule a pod, bind a PVC, pull an image, run a readiness probe or
+  # route a packet. This job applies the shipping manifests to a kind cluster and
+  # drives a machine through its lifecycle, which is the only way those parts get
+  # exercised at all.
+  #
+  # FUNCTIONAL, not isolation: kind has no gVisor, so the kind overlay disables
+  # the RuntimeClass. This job says nothing about the sandbox a production
+  # deployment relies on (SECURITY.md); it says the driver drives Kubernetes.
+  kubernetes-e2e:
+    name: kubernetes backend (kind)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      # The guest image is ~2.7 GB (Ubuntu + Node + code-server + Claude), and
+      # `kind load docker-image` writes it out as a tar and then imports it into
+      # the node's containerd — so the job needs roughly three copies on disk at
+      # once. A stock runner does not have that spare, and the failure mode is an
+      # unhelpful "no space left on device" from `docker save`. Reclaim the
+      # preinstalled toolchains we do not use.
+      #
+      # Runs BEFORE setup-go: the Go toolchain lands in the hosted tool cache,
+      # which is why that directory is deliberately left alone.
+      - name: Free disk space
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /usr/share/swift /usr/local/share/powershell || true
+          docker image prune -af >/dev/null 2>&1 || true
+          echo "after reclaim:"
+          df -h / | tail -1
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: nodeagent/go.mod
+          cache-dependency-path: |
+            go.work.sum
+            nodeagent/go.sum
+
+      # install_only: the script creates and tears down its own cluster, so the
+      # action must not create one.
+      - name: Install kind
+        uses: helm/kind-action@v1
+        with:
+          install_only: true
+
+      - name: Run the kind e2e
+        run: deploy/kubernetes/e2e-kind.sh
+
   # Firecracker integration tests run the real jailed VMM and need KVM, so they
   # only run on a self-hosted runner with the [self-hosted, linux, kvm] labels.
   # The runner must have firecracker+jailer installed and the pinned kernel/rootfs
@@ -221,8 +273,39 @@ jobs:
       - name: Install deps
         run: npm ci
 
+      # `npm audit` exits 1 for two very different things: "found high/critical
+      # vulnerabilities" and "could not reach the audit endpoint". npm's endpoint
+      # fails often enough that the second has blocked PRs that changed no
+      # JavaScript at all. So: enforce a real report, and treat the absence of
+      # one as a warning — a registry outage is not a finding about this repo.
       - name: npm audit
-        run: npm audit --audit-level=high
+        run: |
+          set +e
+          report="$(npm audit --json 2>/tmp/npm-audit.err)"
+          set -e
+          if ! printf '%s' "$report" | grep -q '"auditReportVersion"'; then
+            echo "::warning title=npm audit skipped::npm produced no audit report (registry or endpoint error); not failing the build"
+            cat /tmp/npm-audit.err || true
+            exit 0
+          fi
+          printf '%s' "$report" | node -e '
+            let raw = "";
+            process.stdin.on("data", c => (raw += c)).on("end", () => {
+              const report = JSON.parse(raw);
+              const counts = (report.metadata && report.metadata.vulnerabilities) || {};
+              console.log("npm audit:", JSON.stringify(counts));
+              const blocking = Object.entries(report.vulnerabilities || {})
+                .filter(([, v]) => v.severity === "high" || v.severity === "critical");
+              if (blocking.length === 0) process.exit(0);
+              console.log("\nHigh/critical:");
+              for (const [name, v] of blocking) {
+                console.log("  " + v.severity + "  " + name + "  " + (v.range || ""));
+              }
+              console.log("\nFix with `npm audit fix`, or `npm update <pkg>` when audit fix");
+              console.log("reports a fix as available but changes nothing.");
+              process.exit(1);
+            });
+          '
 
       - name: Lint (ESLint)
         run: npm run lint
@@ -368,7 +451,7 @@ jobs:
   # Dockerfile's directory.
   publish:
     name: publish ${{ matrix.image }}
-    needs: [controlplane, nodeagent, guestagent, guest-image, web]
+    needs: [controlplane, nodeagent, guestagent, guest-image, kubernetes-e2e, web]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:

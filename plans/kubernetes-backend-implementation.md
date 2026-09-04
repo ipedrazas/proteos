@@ -3,10 +3,11 @@
 > Source: request to "delegate the execution of a remote agent to a Kubernetes
 > cluster" (2026-09-04). Feature work off the master-plan numbering, like
 > `port-preview` and `multi-machine`; stages labelled **K0–K6**.
-> Status: **K0–K2 implemented** (branch `feat/kubernetes-backend`, 2026-09-04) —
-> the tracer bullet of the "Suggested first PR" below, minus the kind e2e job.
-> K3–K6 not started. See "Implementation notes" at the end for where the build
-> departed from this plan and why.
+> Status: **K0–K2 implemented and verified against a real cluster**
+> (2026-09-04). The tracer bullet of the "Suggested first PR" below, complete
+> including the kind e2e job. K3–K6 not started. See "Implementation notes" at
+> the end for where the build departed from this plan, and "What the kind e2e
+> found" for the bugs that only a real API server could surface.
 
 ## TL;DR
 
@@ -482,15 +483,56 @@ What landed, and where it differs from the plan above.
    not support the POSIX locks SQLite needs — persistence silently degraded to
    ephemeral. Worth knowing before debugging it again.
 
+### What the kind e2e found
+
+The job (`deploy/kubernetes/e2e-kind.sh`) was written last and paid for itself
+immediately. Every one of these passed unit tests against the fake clientset and
+would have shipped:
+
+1. **The cluster-agent could not start at all.** `run()` opened the on-disk
+   state.Store before choosing a driver, so it crash-looped against the
+   read-only root filesystem its own Deployment sets. The kubernetes driver
+   keeps no local state — the code just did not match the design.
+2. **No machine could be scheduled on a small cluster.** Requests equalled
+   limits for cpu as well as memory, so a 1-vcpu machine demanded a whole free
+   core. Fixed with `PROTEOS_K8S_CPU_REQUEST_RATIO` (default 1.0 — production
+   behaviour unchanged); memory stays request == limit, because it is
+   incompressible.
+3. **Terminating objects were reported as present.** A real cluster keeps a pod
+   visible for its grace period and pins a PVC with the pvc-protection
+   finalizer, so a destroyed machine kept answering 200. The fake clientset
+   deletes instantly and has no finalizers, so nothing else could have caught it.
+4. **Dir mode never gave the session user its home or workspace.** Disk mode
+   chowned them and seeded dotfiles; dir mode only created the directories,
+   because the helpers lived in `mount_linux.go`. Harmless while dir mode was a
+   dev-only override; fatal once it became this backend's only mode, where the
+   agent is root and sessions are not. The shell said `Permission denied` on its
+   own workspace.
+5. **Dir mode's `$HOME` and session cwd disagreed** — a session started in the
+   image's `/home/dev`, which dies with the container, while `$HOME` pointed at
+   the volume. Anything written relative to cwd was silently ephemeral.
+
+Plus one design change made on its own merits and confirmed here: the readiness
+probe is `exec`, not `httpGet`. The kubelet performs httpGet probes from the
+node's address, which would force the machine's NetworkPolicy to admit a second
+peer on the very ports it exists to restrict — and CNIs disagree about whether
+probe traffic is policed at all, so readiness would have become a property of
+the cluster's CNI rather than of the guest.
+
+Two of the early "failures" were the test lying to itself: a PTY echoes what is
+typed into it, so a command containing its own completion marker matched the
+echo rather than the output. Worth knowing before writing the next one.
+
 ### Still open before this is usable end to end
 
-- **K2's kind e2e job.** The manifests and images are built and unit-tested, but
-  nothing has yet created a machine in a real cluster. This is the single
-  biggest remaining risk: NetworkPolicy enforcement, the RuntimeClass, PVC
-  binding and pod-IP dialing are all untested against a real API server.
 - **K3 in full** — `hosts.driver`, `templates.image_ref`, the scheduler filter,
   poweroff-for-kubernetes in `Service.Stop`, and the `backend` field in the API
   and SPA. Until then the control plane cannot place a machine on a cluster host
   or explain why hibernate behaves differently.
-- **K4** — the sshd sidecar, and the preview/code-server paths verified against
-  a real cluster.
+- **K4** — the sshd sidecar, and code-server verified against a real cluster
+  (the preview forward already is).
+- **Isolation is still unverified.** kind has no gVisor, so the e2e runs with no
+  RuntimeClass and proves only that the driver drives Kubernetes correctly. That
+  a sandboxed runtime actually contains a machine, and that a policy-enforcing
+  CNI actually blocks pod-to-machine traffic, are both untested — and they are
+  the two assumptions the whole security model rests on (K5).

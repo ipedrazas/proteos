@@ -1,0 +1,36 @@
+# gVisor is not available in kind, so machine pods run on the node's default
+# runtime here. That makes this a FUNCTIONAL test, not an isolation test: it
+# proves the driver drives a real API server correctly — pods schedule, PVCs
+# bind, the guest tunnel reaches the pod IP — and proves nothing at all about
+# the sandbox that a production deployment relies on. See SECURITY.md.
+#
+# The image is loaded into the kind node with `kind load`, so it must never be
+# pulled from a registry.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proteos-cluster-agent
+spec:
+  template:
+    spec:
+      containers:
+        - name: node-agent
+          imagePullPolicy: Never
+          env:
+            - name: PROTEOS_K8S_RUNTIME_CLASS
+              value: ""
+            # A kind node is one container on a 2-4 core CI runner, and the
+            # control plane has already reserved about a core of it. At the
+            # default ratio a 1-vcpu machine demands a whole free core and the
+            # scheduler simply refuses it ("Insufficient cpu"), which is how the
+            # first real run of this e2e failed. Machines here are scheduled on a
+            # tenth of a core and still allowed their full limit when the node is
+            # idle. Production leaves this at the default.
+            - name: PROTEOS_K8S_CPU_REQUEST_RATIO
+              value: "0.1"
+            # The guest image is `kind load`ed too. Machine pods use
+            # imagePullPolicy: IfNotPresent, so a loaded image is never pulled;
+            # this just lets the e2e name one image for every machine without
+            # sending image_ref on each request.
+            - name: PROTEOS_K8S_DEFAULT_IMAGE
+              value: proteos-guest:e2e

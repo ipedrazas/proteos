@@ -17,17 +17,34 @@ control plane ──TLS+bearer──▶ cluster-agent (Deployment, proteos-syste
 
 | File | What it is |
 | --- | --- |
-| `namespace.yaml` | `proteos-system` (the agent) and `proteos-machines` (the machines) |
-| `rbac.yaml` | ServiceAccount + namespaced Role (pods/PVCs/NetworkPolicies) + ClusterRole (nodes, for capacity) |
-| `deployment.yaml` | The cluster-agent itself |
-| `service.yaml` | ClusterIP :9090 |
-| `networkpolicy.yaml` | Default-deny for `proteos-machines`; the agent's own policy |
-| `runtimeclass-gvisor.yaml` | Example RuntimeClass (**not** applied by default — see below) |
-| `kustomization.yaml` | Ties them together |
+| `base/namespace.yaml` | `proteos-system` (the agent) and `proteos-machines` (the machines) |
+| `base/rbac.yaml` | ServiceAccount + namespaced Role (pods/PVCs/NetworkPolicies) + ClusterRole (nodes, for capacity) |
+| `base/deployment.yaml` | The cluster-agent itself |
+| `base/service.yaml` | ClusterIP :9090 |
+| `base/networkpolicy.yaml` | Default-deny for `proteos-machines`; the agent's own policy |
+| `base/runtimeclass-gvisor.yaml` | Example RuntimeClass (**not** applied by default — see below) |
+| `overlays/kind/` | The e2e shape: no RuntimeClass, locally-loaded images. Used by `e2e-kind.sh`, not for production |
 
 ```sh
-kubectl apply -k deploy/kubernetes/
+kubectl apply -k deploy/kubernetes/base/
 ```
+
+## Testing it end to end
+
+`deploy/kubernetes/e2e-kind.sh` stands up a kind cluster, builds and loads the
+node-agent and guest images, applies these manifests (the real ones, through the
+kind overlay), and drives a machine through its whole lifecycle against a real
+API server:
+
+```sh
+deploy/kubernetes/e2e-kind.sh          # create, test, tear down
+deploy/kubernetes/e2e-kind.sh --keep   # leave the cluster up to poke at
+```
+
+It is a **functional** test, not an isolation test — kind has no gVisor, so the
+overlay disables the RuntimeClass. What it does prove is the part unit tests
+cannot: that pods schedule, PVCs bind and survive a stop, the guest tunnel
+reaches the pod IP, and the RBAC in `base/rbac.yaml` is sufficient.
 
 ## Before you apply
 

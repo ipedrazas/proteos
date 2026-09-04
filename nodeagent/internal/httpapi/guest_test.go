@@ -74,9 +74,10 @@ func echoServer(t *testing.T) (network, addr string, closeFn func()) {
 		t.Fatal(err)
 	}
 	var (
-		mu    sync.Mutex
-		conns []net.Conn
-		wg    sync.WaitGroup
+		mu     sync.Mutex
+		conns  []net.Conn
+		closed bool
+		wg     sync.WaitGroup
 	)
 	go func() {
 		for {
@@ -84,20 +85,36 @@ func echoServer(t *testing.T) (network, addr string, closeFn func()) {
 			if err != nil {
 				return
 			}
+			// Add under the same lock that closeFn takes before it Waits, and
+			// refuse to register a connection once teardown has begun. A
+			// WaitGroup.Add that lands after Wait has started is a data race
+			// (and the race detector flags it as one), which is exactly what a
+			// connection accepted during teardown used to cause — rarely, and
+			// only under CI timing.
 			mu.Lock()
+			if closed {
+				mu.Unlock()
+				c.Close()
+				continue
+			}
 			conns = append(conns, c)
-			mu.Unlock()
 			wg.Add(1)
+			mu.Unlock()
+
 			go func() { defer wg.Done(); _, _ = io.Copy(c, c); c.Close() }()
 		}
 	}()
 	closeFn = func() {
-		ln.Close()
 		mu.Lock()
-		for _, c := range conns {
+		closed = true
+		open := conns
+		conns = nil
+		mu.Unlock()
+
+		ln.Close()
+		for _, c := range open {
 			c.Close()
 		}
-		mu.Unlock()
 		wg.Wait()
 	}
 	return "tcp", ln.Addr().String(), closeFn

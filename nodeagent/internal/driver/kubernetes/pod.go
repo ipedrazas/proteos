@@ -9,7 +9,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 
 	api "github.com/tavon-ai/proteos/nodeagent/api"
 	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
@@ -160,19 +159,30 @@ func (d *Driver) buildPod(spec driver.VMSpec, image string) *corev1.Pod {
 					{Name: persistVolume, MountPath: persistMountPath},
 					{Name: runVolume, MountPath: runMountPath},
 				},
-				Resources: resourceRequirements(spec),
+				Resources: d.resourceRequirements(spec),
 				// Readiness gates DialGuest: the driver refuses to tunnel to a
 				// pod whose guest-agent is not answering /healthz yet, which is
 				// what keeps a "running" machine actually attachable.
+				//
+				// EXEC, not httpGet, and deliberately so. An httpGet probe is
+				// performed by the kubelet from the NODE's address, which means
+				// the machine's NetworkPolicy would have to permit a second
+				// ingress peer on the very guest ports it exists to restrict to
+				// exactly one — and the node's address is not something a
+				// portable policy can name. Whether kubelet probe traffic is
+				// even subject to policy differs between CNIs, so an httpGet
+				// probe makes readiness a property of the CNI rather than of the
+				// guest. An exec probe runs through the CRI rather than the
+				// network: unaffected by policy, identical on every CNI, and it
+				// keeps the guest's network surface exactly "the cluster-agent,
+				// and nothing else".
 				ReadinessProbe: &corev1.Probe{
 					ProbeHandler: corev1.ProbeHandler{
-						HTTPGet: &corev1.HTTPGetAction{
-							Path: "/healthz",
-							Port: intstr.FromInt32(int32(api.GuestTerminalPort)),
-						},
+						Exec: &corev1.ExecAction{Command: healthzProbeCommand()},
 					},
 					InitialDelaySeconds: 1,
-					PeriodSeconds:       2,
+					PeriodSeconds:       3,
+					TimeoutSeconds:      3,
 					FailureThreshold:    30,
 				},
 				SecurityContext: &corev1.SecurityContext{
@@ -219,26 +229,62 @@ func listenSpec(port uint32) string {
 }
 
 // resourceRequirements maps the machine's vcpu/memory shape onto pod resources.
-// Requests and limits are equal so a machine gets the Guaranteed QoS class: the
-// firecracker backend hands a VM a fixed slice of the host, and a machine that
-// is silently throttled or evicted under node pressure would be a worse
-// experience than one the scheduler simply cannot place.
-func resourceRequirements(spec driver.VMSpec) corev1.ResourceRequirements {
-	list := corev1.ResourceList{}
+//
+// MEMORY is always request == limit. Memory is incompressible: a machine that
+// is overcommitted on memory is not slow, it is OOM-killed, and losing someone's
+// agent session to a noisy neighbour is not a trade worth making.
+//
+// CPU is compressible, so its request is scaled by CPURequestRatio (default
+// 1.0 — request == limit, the Guaranteed-QoS behaviour a Firecracker VM's fixed
+// slice of a host most resembles). Lowering it lets a machine be SCHEDULED with
+// less than a dedicated core while still being ALLOWED a full one when the node
+// is idle. Without that knob a 2-vcpu machine demands two whole free cores, so
+// the backend cannot place a single machine on a small cluster — a dev cluster,
+// a single-node k3s, or a CI kind node — at all.
+func (d *Driver) resourceRequirements(spec driver.VMSpec) corev1.ResourceRequirements {
+	requests, limits := corev1.ResourceList{}, corev1.ResourceList{}
+
 	if spec.Vcpus > 0 {
-		list[corev1.ResourceCPU] = *resource.NewQuantity(int64(spec.Vcpus), resource.DecimalSI)
+		limits[corev1.ResourceCPU] = *resource.NewQuantity(int64(spec.Vcpus), resource.DecimalSI)
+		milli := int64(float64(spec.Vcpus) * 1000 * d.cpuRequestRatio())
+		if milli < 1 {
+			milli = 1 // never request zero: that is a different QoS class entirely
+		}
+		requests[corev1.ResourceCPU] = *resource.NewMilliQuantity(milli, resource.DecimalSI)
 	}
 	if spec.MemMiB > 0 {
-		list[corev1.ResourceMemory] = *resource.NewQuantity(int64(spec.MemMiB)*1024*1024, resource.BinarySI)
+		mem := *resource.NewQuantity(int64(spec.MemMiB)*1024*1024, resource.BinarySI)
+		requests[corev1.ResourceMemory] = mem
+		limits[corev1.ResourceMemory] = mem
 	}
-	if len(list) == 0 {
+
+	if len(requests) == 0 {
 		return corev1.ResourceRequirements{}
 	}
-	limits := corev1.ResourceList{}
-	for k, v := range list {
-		limits[k] = v
+	return corev1.ResourceRequirements{Requests: requests, Limits: limits}
+}
+
+// cpuRequestRatio is the configured ratio, clamped to (0,1]. A value outside
+// that range is meaningless — above 1 would request more than the limit, which
+// the API server rejects — so it falls back to the safe default rather than
+// producing a pod that cannot be created.
+func (d *Driver) cpuRequestRatio() float64 {
+	r := d.cfg.CPURequestRatio
+	if r <= 0 || r > 1 {
+		return 1
 	}
-	return corev1.ResourceRequirements{Requests: list, Limits: limits}
+	return r
+}
+
+// healthzProbeCommand curls the guest-agent's own /healthz over loopback inside
+// the container. curl is part of the guest image's platform layer (both the
+// ext4 bake and the OCI build install it), and -m bounds it so a wedged agent
+// fails the probe rather than hanging it.
+func healthzProbeCommand() []string {
+	return []string{
+		"curl", "--fail", "--silent", "--show-error", "--max-time", "2",
+		"http://127.0.0.1:" + strconv.FormatUint(uint64(api.GuestTerminalPort), 10) + "/healthz",
+	}
 }
 
 func ptr[T any](v T) *T { return &v }

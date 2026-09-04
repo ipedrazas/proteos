@@ -93,6 +93,15 @@ spec:
             - name: PROTEOS_K8S_NODE_SELECTOR
               value: ""
 
+            # CPU request as a fraction of the limit (0<r<=1, default 1.0).
+            # At the default a machine needs a whole free core per vcpu to be
+            # scheduled — closest to a Firecracker VM's fixed slice of a host,
+            # but more than a small cluster can give. Lower it to oversubscribe
+            # CPU, which is compressible; memory is always request == limit,
+            # because an overcommitted machine is OOM-killed rather than slowed.
+            - name: PROTEOS_K8S_CPU_REQUEST_RATIO
+              value: "1.0"
+
             # Tracer bullet only: the image to use when a template carries no
             # image_ref. K3 makes the control plane send one.
             - name: PROTEOS_K8S_DEFAULT_IMAGE
@@ -101,6 +110,13 @@ spec:
             - name: tls
               mountPath: /etc/proteos/tls
               readOnly: true
+            # readOnlyRootFilesystem is true below, so give the process a
+            # writable temp dir rather than relying on it never wanting one.
+            # Nothing persistent goes here: with the kubernetes driver the API
+            # server is the record and the agent keeps no local state — which is
+            # what makes a read-only root possible at all.
+            - name: tmp
+              mountPath: /tmp
           readinessProbe:
             httpGet:
               path: /healthz
@@ -128,6 +144,8 @@ spec:
             capabilities:
               drop: [ALL]
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: tls
           secret:
             secretName: proteos-cluster-agent

@@ -42,12 +42,7 @@ func run() error {
 		return err
 	}
 
-	store, err := state.NewStore(cfg.DataDir, cfg.Subnet)
-	if err != nil {
-		return err
-	}
-
-	drv, err := buildDriver(cfg, store)
+	drv, err := buildDriver(cfg)
 	if err != nil {
 		return err
 	}
@@ -125,12 +120,26 @@ func run() error {
 // it is absent, requesting it is a startup error rather than a silent fallback.
 // The kubernetes driver needs no build tag — client-go is cross-platform — so a
 // default build still compiles it everywhere.
-func buildDriver(cfg *config.Config, store *state.Store) (driver.Driver, error) {
+//
+// The on-disk state store is created HERE, per driver, rather than up front:
+// only the process-backed drivers need one. The kubernetes driver keeps no local
+// state at all, and creating a store for it would mean the cluster-agent could
+// not run with a read-only root filesystem — which is exactly what the shipped
+// Deployment gives it.
+func buildDriver(cfg *config.Config) (driver.Driver, error) {
 	switch cfg.Driver {
 	case "dev":
+		store, err := newStore(cfg)
+		if err != nil {
+			return nil, err
+		}
 		return dev.New(store, cfg.BootDelay, cfg.StubPath, cfg.GuestAgentBin, cfg.DevGuestWebBackend).
 			WithCapacity(cfg.CapacityVcpus, cfg.CapacityMemMiB, cfg.CapacityDiskMiB), nil
 	case "firecracker":
+		store, err := newStore(cfg)
+		if err != nil {
+			return nil, err
+		}
 		return newFirecrackerDriver(cfg, store)
 	case "kubernetes":
 		// No state.Store: the API server is this driver's record, so it keeps
@@ -151,8 +160,14 @@ func buildDriver(cfg *config.Config, store *state.Store) (driver.Driver, error) 
 			ClusterCIDRs:    cfg.K8sClusterCIDRs,
 			DNSNamespace:    cfg.K8sDNSNamespace,
 			DefaultImage:    cfg.K8sDefaultImage,
+			CPURequestRatio: cfg.K8sCPURequestRatio,
 		}), nil
 	default:
 		return nil, errors.New("unknown PROTEOS_AGENT_DRIVER: " + cfg.Driver)
 	}
+}
+
+// newStore opens the on-disk record the process-backed drivers re-attach from.
+func newStore(cfg *config.Config) (*state.Store, error) {
+	return state.NewStore(cfg.DataDir, cfg.Subnet)
 }

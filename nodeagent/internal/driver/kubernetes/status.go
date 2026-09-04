@@ -23,23 +23,44 @@ import (
 func (d *Driver) Status(ctx context.Context, machineID string) (driver.Status, error) {
 	pod, err := d.client.CoreV1().Pods(d.cfg.Namespace).
 		Get(ctx, resourceName(machineID), metav1.GetOptions{})
-	if err == nil {
+	switch {
+	case err == nil && !terminating(pod.ObjectMeta):
 		return d.statusOf(pod), nil
-	}
-	if !apierrors.IsNotFound(err) {
+	case err != nil && !apierrors.IsNotFound(err):
 		return driver.Status{}, fmt.Errorf("get pod %s: %w", resourceName(machineID), err)
 	}
 
+	// No live pod. The machine still exists if its volume does — that is the
+	// difference between a stop and a destroy. A pod that is merely terminating
+	// counts as gone: it has been told to die and cannot serve a session, and
+	// the API server keeps it visible for the whole grace period.
 	if !d.pvcExists(ctx, machineID) {
 		return driver.Status{}, driver.ErrUnknownMachine
 	}
+
+	// A pod that is still terminating means the shutdown is in flight; without
+	// this the machine would report "stopped" while its container is still
+	// running.
+	state := api.StateStopped
+	if err == nil {
+		state = api.StateStopping
+	}
 	return driver.Status{
 		MachineID: machineID,
-		State:     api.StateStopped,
+		State:     state,
 		Handle:    d.handle(machineID),
 		Boot:      api.BootCold,
 		DiskID:    d.diskIDFromPVC(ctx, machineID),
 	}, nil
+}
+
+// terminating reports whether an object has been deleted but is still visible:
+// a pod inside its termination grace period, or a PVC whose pvc-protection
+// finalizer is held while a pod still mounts it. Both look present to a Get and
+// neither is usable, and neither ever happens against the fake clientset — which
+// deletes instantly — so only a real cluster shows this up.
+func terminating(meta metav1.ObjectMeta) bool {
+	return meta.DeletionTimestamp != nil
 }
 
 // List returns every machine this driver owns in the namespace. Machines that
@@ -55,6 +76,9 @@ func (d *Driver) List(ctx context.Context) ([]driver.Status, error) {
 	out := make([]driver.Status, 0, len(pods.Items))
 	seen := make(map[string]struct{}, len(pods.Items))
 	for i := range pods.Items {
+		if terminating(pods.Items[i].ObjectMeta) {
+			continue // dying: let the PVC below report it as stopped/gone
+		}
 		st := d.statusOf(&pods.Items[i])
 		if st.MachineID == "" {
 			continue // not ours after all: no machine-id annotation
@@ -70,6 +94,9 @@ func (d *Driver) List(ctx context.Context) ([]driver.Status, error) {
 	}
 	for i := range pvcs.Items {
 		pvc := &pvcs.Items[i]
+		if terminating(pvc.ObjectMeta) {
+			continue // destroyed; the volume is only still visible for its finalizer
+		}
 		id := pvc.Annotations[MachineIDAnnotation]
 		if id == "" {
 			continue

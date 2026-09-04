@@ -311,6 +311,11 @@ tasks:
     vars:
       NA_IMAGE: '{{.NA_IMAGE | default "proteos-node-agent:dev"}}'
 
+  na:e2e:kind:
+    desc: "Node-agent: drive the kubernetes backend against a real kind cluster (needs kind+kubectl+docker)"
+    cmds:
+      - deploy/kubernetes/e2e-kind.sh {{.CLI_ARGS}}
+
   # ---------------------------------------------------------------------------
   # Guest image (OCI) — ./image/guest.Dockerfile (the Kubernetes backend's guest)
   # ---------------------------------------------------------------------------
