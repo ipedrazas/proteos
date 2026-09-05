@@ -146,6 +146,26 @@ func TestEnsureBuildsTheExpectedPod(t *testing.T) {
 		}
 	}
 
+	// A machine resolves public names, not Services. The kubelet's ndots=5 sends
+	// every name with fewer than five dots around the cluster search path first,
+	// which is wasted work everywhere and actively wrong on a cluster whose
+	// search domain answers wildcards: github.com resolves to an internal address
+	// and the machine's own egress policy then blocks it, which looks like a
+	// ProteOS network bug rather than a DNS one. Found on a real cluster.
+	if pod.Spec.DNSConfig == nil {
+		t.Error("machine pod inherits the cluster's ndots, so public names resolve through the search path first")
+	} else {
+		var ndots string
+		for _, o := range pod.Spec.DNSConfig.Options {
+			if o.Name == "ndots" && o.Value != nil {
+				ndots = *o.Value
+			}
+		}
+		if ndots != "1" {
+			t.Errorf("ndots = %q, want 1", ndots)
+		}
+	}
+
 	// /run/proteos must be memory-backed: the secrets package requires its env
 	// dir to be tmpfs so injected credentials never touch a disk.
 	var runVol *corev1.Volume

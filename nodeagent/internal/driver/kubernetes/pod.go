@@ -142,6 +142,7 @@ func (d *Driver) buildPod(spec driver.VMSpec, image string) *corev1.Pod {
 			TerminationGracePeriodSeconds: &grace,
 			AutomountServiceAccountToken:  ptr(false), // a machine is not a cluster client
 			EnableServiceLinks:            ptr(false), // do not leak service env vars into the guest
+			DNSConfig:                     machineDNSConfig(),
 			NodeSelector:                  d.cfg.NodeSelector,
 			Volumes:                       volumes,
 			Containers: []corev1.Container{
@@ -297,6 +298,29 @@ func sshdResources() corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{corev1.ResourceCPU: cpu, corev1.ResourceMemory: mem},
 		Limits:   corev1.ResourceList{corev1.ResourceCPU: cpu, corev1.ResourceMemory: mem},
+	}
+}
+
+// machineDNSConfig lowers ndots for machine pods. The kubelet's default of 5
+// means any name with fewer than five dots — github.com, registry.npmjs.org,
+// api.anthropic.com — is tried against every cluster search domain BEFORE being
+// asked for as written.
+//
+// That is the right default for a workload that talks to Services by short name.
+// A machine is not one: it is a dev box whose lookups are overwhelmingly public
+// names, and the same reasoning already turns off the service-account token and
+// the service env vars. Inside a Firecracker guest there is no cluster search
+// path at all, so this also brings the two backends closer together.
+//
+// It is not only wasted queries. On a cluster whose search domain answers
+// wildcards — which is not exotic; a homelab with a catch-all internal zone does
+// it — `github.com` resolves via `github.com.<search domain>` to an internal
+// address, and the machine's egress policy then blocks it for being private
+// space. Cloning from GitHub fails, and it looks exactly like a ProteOS network
+// bug rather than a DNS one. ndots=1 asks for the name as written first.
+func machineDNSConfig() *corev1.PodDNSConfig {
+	return &corev1.PodDNSConfig{
+		Options: []corev1.PodDNSConfigOption{{Name: "ndots", Value: ptr("1")}},
 	}
 }
 
