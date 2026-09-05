@@ -484,10 +484,12 @@ func TestKindSSH(t *testing.T) {
 		t.Errorf("ssh session is not the `dev` user in the persisted home: %q", tail(out))
 	}
 
-	// 4. The host identity is the machine's, not the image's. Take the
-	// fingerprint, restart, and take it again: an image-baked key would make
-	// every machine identical, and an ephemeral one would change here and greet
-	// the user with a host-key warning on every boot.
+	// 4. The host identity is the machine's, not the image's, and it survives.
+	// Take the fingerprint sshd presents, restart the machine, take it again: an
+	// image-baked key would make every machine identical, and an ephemeral one
+	// would change here and greet the user with a host-key warning on every
+	// boot. A stable fingerprint across a fresh container is also the only
+	// evidence that the keys are really on the volume.
 	out = runInGuest(t, ws, hostKeyFingerprintCmd+echoMarker("FP-1"), "FP-1", 60*time.Second)
 	before := fingerprint(t, out)
 	ws.Close()
@@ -537,14 +539,21 @@ func waitForSSHBanner(t *testing.T, a *agent, id string, timeout time.Duration) 
 	return ""
 }
 
-// hostKeyFingerprintCmd prints the machine's ed25519 host key fingerprint tagged
-// with FP:, written so that the tag does NOT appear literally in the command —
-// awk concatenates "F" and "P:" at run time. Same reason echoMarker splits its
-// marker: a PTY echoes what is typed into it, so a command containing its own
-// tag is matched against the echo rather than the output, and the assertion
-// compares the command with itself. (It did, on the first run of this test:
-// "before" and "after" were both a fragment of the awk program.)
-const hostKeyFingerprintCmd = `ssh-keygen -lf /persist/ssh_host_keys/ssh_host_ed25519_key.pub | awk '{print "F" "P:" $2}'; `
+// hostKeyFingerprintCmd prints the fingerprint of the host key sshd PRESENTS,
+// asked over the protocol rather than read off the volume. Two reasons, and the
+// first is that reading the file does not work: the host key directory is
+// root-only (private keys live in it) and a session runs as the unprivileged
+// user, so ssh-keygen -lf answers "Permission denied". The second is that this
+// is the better assertion anyway — what a client pins is the key sshd offers,
+// not a file that happens to sit next to it.
+//
+// The FP: tag is concatenated by awk at run time so it never appears literally
+// in the command. Same reason echoMarker splits its marker: a PTY echoes what is
+// typed into it, so a command containing its own tag is matched against the echo
+// rather than the output, and the assertion compares the command with itself.
+// (It did, on the first run of this test: "before" and "after" were both a
+// fragment of the awk program.)
+const hostKeyFingerprintCmd = `ssh-keyscan -t ed25519 127.0.0.1 2>/dev/null | ssh-keygen -lf - | awk '{print "F" "P:" $2}'; `
 
 // fingerprint pulls the tagged fingerprint out of a PTY buffer. It insists on a
 // SHA256: value and fails the test otherwise, so no other line — an echo, a
