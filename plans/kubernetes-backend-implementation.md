@@ -3,8 +3,11 @@
 > Source: request to "delegate the execution of a remote agent to a Kubernetes
 > cluster" (2026-09-04). Feature work off the master-plan numbering, like
 > `port-preview` and `multi-machine`; stages labelled **K0–K6**.
-> Status: **K0–K4 implemented** (K4: 2026-09-05); K0–K2 and K4 verified against a
-> real cluster via the kind e2e job. K5–K6 not started. With K3 the control plane can
+> Status: **K0–K4 implemented** (K4: 2026-09-05), and verified end to end on a
+> real multi-node k3s cluster with gVisor and a policy-enforcing CNI — see
+> "What a production-shaped cluster found". K5–K6 not started, but the two
+> isolation assumptions K5 exists to establish are now demonstrated rather than
+> assumed. With K3 the control plane can
 > place a machine on a cluster host on its own — before it, a machine could only
 > be created there by driving the agent directly. See "Implementation notes" at
 > the end for where the build departed from this plan, and "What the kind e2e
@@ -636,15 +639,60 @@ container made every simulated machine look like one whose sshd never came up.
 That is the third time this backend's fake has been confidently wrong about
 something a real cluster settles immediately.
 
+### What a production-shaped cluster found (2026-09-05)
+
+Run against a three-node k3s v1.36 cluster (containerd 2.3.4, MetalLB, kube-router
+policy enforcement, gVisor installed on two nodes), driving the whole `kind_e2e`
+suite through the deployed cluster-agent. All six tests pass, and a machine's own
+`/proc/version` reports `4.19.0-gvisor` — so this is the first evidence that a
+ProteOS machine is actually sandboxed rather than merely asked to be.
+
+The two K5 assumptions, both demonstrated with a control rather than assumed:
+
+- **The sandbox contains the machine.** Both the guest container and the sshd
+  sidecar report a gVisor kernel; the toolchain (Claude, node, git, code-server,
+  sshd, PTYs) all work inside it.
+- **The CNI enforces NetworkPolicy.** An unrelated pod is refused a machine's
+  terminal port and reaches it the moment the policy is deleted. Machine egress
+  to RFC1918 is refused; egress to the internet works.
+
+Four things the cluster corrected that nothing else could have:
+
+1. **`gvisor-k3s.sh` gave up where it should have acted.** k3s did not
+   auto-detect runsc, and the script refused to guess a containerd template —
+   right, but there is a supported drop-in mechanism it should have used, reading
+   the import directory and plugin table name out of the config k3s generated on
+   that node rather than assuming either.
+2. **It restarted the wrong unit** (`k3s` on a node running `k3s-agent`) and its
+   smoke pod was unpinned, so it tested whichever node the scheduler picked — on
+   a half-rolled-out cluster it landed on the one node without runsc and reported
+   failure for a node that was fine.
+3. **A RuntimeClass needs a nodeSelector.** Without one a machine is scheduled
+   anywhere and fails to start on a node without the runtime, which reads as a
+   broken machine rather than an un-rolled-out cluster. A cluster is mixed for
+   the whole of any rollout.
+4. **Machines inherited the cluster's `ndots=5`.** On a cluster whose search
+   domain answers wildcards, `github.com` resolved through it to an internal
+   address and the machine's own egress policy then blocked it. git, npm and the
+   coding agent all fail to reach the internet, on a machine whose NetworkPolicy
+   is correct and a cluster whose DNS is working as configured — it reads as a
+   ProteOS networking bug. Machine pods now set `ndots=1`.
+
+Two environment facts worth recording for anyone doing this again: a MetalLB VIP
+is an L2 announcement that does not cross a subnet boundary (the certificate SAN
+has to name whatever the control plane will actually dial), and importing images
+into `k3s ctr` is the way to test an unpublished build without putting a registry
+credential in the cluster.
+
 ### Still open before this is usable end to end
 - **Isolation is still unverified.** kind has no gVisor, so the e2e runs with no
   RuntimeClass and proves only that the driver drives Kubernetes correctly. That
   a sandboxed runtime actually contains a machine, and that a policy-enforcing
   CNI actually blocks pod-to-machine traffic, are both untested — and they are
   the two assumptions the whole security model rests on (K5).
-  `deploy/kubernetes/gvisor-k3s.sh` installs the runtime and smoke-tests that a
-  pod really runs under a gVisor kernel, but it has not itself been run on a
-  cluster yet.
+  Both were verified by hand on a real cluster on 2026-09-05 (above); what is
+  still missing is having CI assert them, which needs a runner that can host a
+  sandboxed runtime.
 - **No control plane drives the cluster in CI.** The kind job talks to the
   cluster-agent directly, so the K3 placement path and the machineweb preview
   proxy (with its port allowlist) are still only covered by unit tests. Standing
