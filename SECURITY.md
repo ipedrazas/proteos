@@ -54,7 +54,8 @@ must know precisely what differs.
 | --- | --- | --- |
 | Kernel | one per machine | shared with the node, unless a sandboxed RuntimeClass (gVisor/Kata) is installed |
 | Guest reachability | vsock only; no listening socket on any network | TCP listeners on the pod IP, restricted by NetworkPolicy |
-| Guest listener auth | none needed (vsock is the boundary) | none yet; NetworkPolicy is the only control |
+| Guest listener auth | none needed (vsock is the boundary) | a per-boot secret the cluster-agent presents first on every connection; the guest closes anything else |
+| NetworkPolicy enforcement | n/a | proved at startup by a canary the agent must fail to reach once denied; the agent refuses to start otherwise |
 | Inbound SSH | sshd under systemd, bound to 127.0.0.1 | sshd in a sidecar container, bound to the pod's 127.0.0.1 |
 | Encryption at rest | per-machine LUKS key, held by the control plane and never written to the host | the StorageClass's responsibility |
 | Egress control | nftables on the machine's tap | NetworkPolicy, from an IP snapshot taken at boot |
@@ -67,12 +68,27 @@ What this means in practice:
   is absent. Setting `PROTEOS_K8S_RUNTIME_CLASS` to the empty string starts it
   anyway, logs loudly, and gives every machine the node's kernel. Do that only
   with the trade-off understood.
-- **NetworkPolicy enforcement is load-bearing.** Each machine's policy permits
-  ingress on the guest ports from the cluster-agent pod and nothing else. On a
-  CNI that accepts NetworkPolicy objects without enforcing them (plain flannel,
-  some managed defaults) those objects silently do nothing and any pod in the
-  cluster can reach any machine's terminal. Verify enforcement before running
-  more than one tenant; `deploy/kubernetes/README.md` has a probe.
+- **NetworkPolicy enforcement is load-bearing, and the agent proves it.** Each
+  machine's policy permits ingress on the guest ports from the cluster-agent
+  pod and nothing else. On a CNI that accepts NetworkPolicy objects without
+  enforcing them (plain flannel, some managed defaults) those objects silently
+  do nothing and any pod in the cluster can reach any machine's terminal. Since
+  nothing in the data path can observe that, the cluster-agent runs an
+  experiment at startup: a canary pod it can reach while a policy permits it,
+  and must fail to reach once the policy denies it. If the deny changes
+  nothing the agent refuses to start. `PROTEOS_K8S_SKIP_NETPOL_PROBE=1` skips
+  it, loudly.
+- **The guest's listeners are authenticated.** Every machine is started with a
+  random per-boot secret, delivered by Kubernetes Secret, that the
+  cluster-agent writes as the first line of every tunnel connection; the guest
+  closes a connection that opens with anything else before a byte reaches the
+  terminal, code-server, the preview forwarder or the ssh forward. This is the
+  second control behind NetworkPolicy, independent of the CNI: a pod that can
+  route to a machine still cannot speak to it. The secret is readable by
+  anything with `secrets/get` in the machine namespace — the cluster-agent's
+  Role, and cluster admins — which is a much smaller set than "anything that
+  can route to a pod IP". `PROTEOS_K8S_GUEST_AUTH=0` disables it for a guest
+  image that predates the preamble.
 - **The per-machine volume key is not used.** There is no host on which to
   `luksOpen` it, so the driver accepts it, ignores it, and logs the fact. Use an
   encrypted StorageClass to restore encryption at rest.

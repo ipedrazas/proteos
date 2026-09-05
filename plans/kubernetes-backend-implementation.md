@@ -3,15 +3,16 @@
 > Source: request to "delegate the execution of a remote agent to a Kubernetes
 > cluster" (2026-09-04). Feature work off the master-plan numbering, like
 > `port-preview` and `multi-machine`; stages labelled **K0–K6**.
-> Status: **K0–K4 implemented** (K4: 2026-09-05), and verified end to end on a
-> real multi-node k3s cluster with gVisor and a policy-enforcing CNI — see
-> "What a production-shaped cluster found". K5–K6 not started, but the two
-> isolation assumptions K5 exists to establish are now demonstrated rather than
-> assumed. With K3 the control plane can
-> place a machine on a cluster host on its own — before it, a machine could only
-> be created there by driving the agent directly. See "Implementation notes" at
-> the end for where the build departed from this plan, and "What the kind e2e
-> found" for the bugs that only a real API server could surface.
+> Status: **K0–K5 implemented** (K5: 2026-09-05). K0–K4 were verified end to
+> end on a real multi-node k3s cluster with gVisor and a policy-enforcing CNI —
+> see "What a production-shaped cluster found". K5 closed the one K2 promise
+> that had been quietly dropped (the agent now PROVES its CNI enforces policy
+> before it serves), put a second, CNI-independent control on the guest's
+> listeners, and stood a control plane up inside the kind job. The dm-crypt
+> option was dropped — see the K5 notes for why. K6 not started. See
+> "Implementation notes" at the end for where the build departed from this
+> plan, and "What the kind e2e found" for the bugs that only a real API server
+> could surface.
 
 ## TL;DR
 
@@ -382,21 +383,37 @@ domain resolution reuse), `guest.go` (`DialGuest`), `capacity.go`.
 
 ### K5 — Isolation hardening
 
-- **Volume encryption option**: `PROTEOS_K8S_VOLUME_ENCRYPTION=dmcrypt` ⇒ PVC
-  `volumeMode: Block`, privileged init container runs `cryptsetup` with the
-  volume key (mounted from a short-lived Secret the driver creates per boot and
-  deletes after the init container completes), then mounts to `/persist` via a
-  shared `emptyDir` mount point. Restores the per-machine key property.
-  Requires a runtime that permits the init container (not gVisor) — document.
-- **Pod security**: PodSecurity admission `restricted`-compatible profile where
-  the RuntimeClass allows; `ResourceQuota` + `LimitRange` per namespace; pod
-  anti-affinity or dedicated node pool for machine pods (`PROTEOS_K8S_NODE_SELECTOR`).
-- **Guest listeners**: add an optional per-machine shared secret the cluster-agent
-  passes at pod creation and presents on every `DialGuest` (a one-line preamble
-  the guest-agent validates), so NetworkPolicy is no longer the *only* thing
-  standing between another pod and an unauthenticated terminal.
-- **Revisit `--dangerously-skip-permissions`** for the Kubernetes backend if
-  operators cannot run a sandboxed runtime; make it a template/provider setting.
+> Landed 2026-09-05. See the K5 implementation notes below. Reordered from the
+> original list: the netpol probe first, because K2 had promised it and shipped
+> without it, and the guest secret second, because it was the only mitigation
+> for risk 2 once the probe turned out not to exist.
+
+- **NetworkPolicy enforcement probe** (the K2 promise): at startup the agent
+  creates a canary listener, proves it can reach it while a policy PERMITS the
+  connection, rewrites the policy to DENY, and refuses to start if the dial
+  still succeeds. `PROTEOS_K8S_SKIP_NETPOL_PROBE=1` skips it, loudly.
+- **Guest listeners**: a per-boot shared secret the cluster-agent mints into a
+  Secret at pod creation and presents as a one-line preamble on every
+  `DialGuest`; the guest-agent gates all four listeners behind it. Default on;
+  `PROTEOS_K8S_GUEST_AUTH=0` for an older image.
+- **Control plane in the kind job**: a `kind_e2e`-tagged control-plane test
+  drives the K3 placement path, poweroff-not-hibernate, and the machine-web
+  preview proxy with BOTH port allowlists against a real machine.
+- **Pod security**: PodSecurity stays `enforce: baseline` — `restricted` is
+  not reachable for a guest that runs as root inside the sandbox, whatever the
+  RuntimeClass (a per-RuntimeClass exemption is an API-server admission
+  setting, not a namespace label). `ResourceQuota` + `LimitRange` ship as an
+  example manifest with operator-chosen numbers.
+- ~~**Volume encryption option** (dm-crypt init container)~~ **Dropped.** It
+  needs a privileged init container, which gVisor does not permit and
+  `baseline` PodSecurity rejects — so the headline feature would have been
+  unusable on the recommended configuration and available only on the
+  documented downgrade. Encryption at rest on this backend is the
+  StorageClass's property, stated as such in SECURITY.md. Revisit only if a
+  Kata-only fleet asks for it.
+- **`--dangerously-skip-permissions`** for the Kubernetes backend: still a
+  product decision, unchanged. The two controls above make the shared-kernel
+  downgrade less dangerous but do not make it safe.
 
 ### K6 — Later
 
@@ -416,9 +433,9 @@ domain resolution reuse), `guest.go` (`DialGuest`), `capacity.go`.
 | # | Risk / question | Mitigation / owner decision |
 | --- | --- | --- |
 | 1 | **Shared-kernel isolation** — the product's core claim is "not a container". | Decision 6: sandboxed RuntimeClass by default; SECURITY.md states the delta; plain runc is an explicit downgrade. |
-| 2 | **Unauthenticated guest listeners on a network** instead of vsock. | NetworkPolicy ingress restriction is mandatory (preflight probe); K5 adds a per-machine secret. |
-| 3 | **Encryption-at-rest regression** (volume key ignored). | Documented; StorageClass encryption recommended; K5 dm-crypt option. |
-| 4 | **CNI without NetworkPolicy enforcement** (e.g. default flannel) silently gives every pod access to every machine. | Preflight probe refuses to start; docs list supported CNIs. |
+| 2 | **Unauthenticated guest listeners on a network** instead of vsock. | NetworkPolicy ingress restriction (proved by the K5 preflight probe) AND a per-boot listener secret (K5); either alone would have to hold. |
+| 3 | **Encryption-at-rest regression** (volume key ignored). | Documented; StorageClass encryption is the answer. The dm-crypt option was dropped in K5 (needs a privileged init container gVisor forbids). |
+| 4 | **CNI without NetworkPolicy enforcement** (e.g. default flannel) silently gives every pod access to every machine. | K5 preflight canary refuses to start (K2 had promised this and shipped without it); docs list supported CNIs. |
 | 5 | **client-go dependency** in the deliberately dependency-free node-agent module. | Accepted (decision 2); three build sites updated in K1; `govulncheck` matrix already covers the module. |
 | 6 | **Image drift** between ext4 and OCI builds. | Shared install fragments sourced by both `build-rootfs.sh` and the Dockerfile; `manifest.lock` extended with the image digest. |
 | 7 | **Hibernate UX** — users of a mixed fleet see two behaviours. | K3 surfaces `backend` in the API/UI and sends poweroff for kubernetes. |
@@ -493,6 +510,13 @@ What landed, and where it differs from the plan above.
    a SQLite `machine.db` on the persist root, and Docker Desktop bind mounts do
    not support the POSIX locks SQLite needs — persistence silently degraded to
    ephemeral. Worth knowing before debugging it again.
+8. **The NetworkPolicy enforcement probe was NOT built here**, although this
+   stage promised it and decision 7 made it mandatory. The preflight checked
+   RBAC, the namespace and the RuntimeClass, and left the CNI question to a
+   manual curl in the README — so for the whole of K2–K4 the agent started
+   cleanly on a CNI that ignores policy, and risk 4 was listed as mitigated
+   when it was not. Recorded here because the plan's status header did not say
+   so; fixed in K5.
 
 ### What the kind e2e found
 
@@ -684,16 +708,96 @@ has to name whatever the control plane will actually dial), and importing images
 into `k3s ctr` is the way to test an unpublished build without putting a registry
 credential in the cluster.
 
-### Still open before this is usable end to end
-- **Isolation is still unverified.** kind has no gVisor, so the e2e runs with no
-  RuntimeClass and proves only that the driver drives Kubernetes correctly. That
-  a sandboxed runtime actually contains a machine, and that a policy-enforcing
-  CNI actually blocks pod-to-machine traffic, are both untested — and they are
-  the two assumptions the whole security model rests on (K5).
-  Both were verified by hand on a real cluster on 2026-09-05 (above); what is
-  still missing is having CI assert them, which needs a runner that can host a
-  sandboxed runtime.
-- **No control plane drives the cluster in CI.** The kind job talks to the
-  cluster-agent directly, so the K3 placement path and the machineweb preview
-  proxy (with its port allowlist) are still only covered by unit tests. Standing
-  a control plane up in the kind job would close both gaps at once.
+### Still open after K4 (resolved in K5 unless noted)
+- **CI did not assert isolation.** Of the two assumptions, one is now asserted
+  on every run: kind ≥ 0.24 enforces NetworkPolicy, so the agent's K5 canary
+  runs for real in the kind job and the script requires its verdict. The other
+  — that a sandboxed runtime contains a machine — still needs a runner that
+  can host gVisor, and remains verified by hand (k3s, 2026-09-05) only.
+- **No control plane drove the cluster in CI.** Now it does
+  (`controlplane/internal/httpapi/kind_e2e_test.go`).
+
+## Implementation notes (K5, 2026-09-05)
+
+The NetworkPolicy enforcement probe, per-boot guest listener authentication, a
+control plane inside the kind job, the quota/limit example, and the decision to
+drop dm-crypt. Verified against a fresh kind cluster: the probe passed, all six
+driver tests and both control-plane tests ran through the authenticated
+listeners, and the leak check (now including Secrets and the canary) was clean.
+
+Then against the three-node k3s v1.36 cluster with gVisor and kube-router, with
+the branch's images imported into `k3s ctr` and the cluster-agent rolled to
+them: the probe verified enforcement there too, the same eight tests passed with
+every machine on a `4.19.0-gvisor` kernel, and the second control was
+demonstrated with a control of its own — a machine's ingress policy was opened
+to every namespace, and from an unrelated pod a connection with no preamble was
+closed, one with a wrong token was closed (both logged by the guest), and one
+with the machine's token got `HTTP/1.0 200 OK`. The cluster was rolled back to
+the published agent afterwards: the published guest image predates the
+preamble, and a K5 agent would start machines from it that never become ready
+(the readiness probe presents a token the guest does not expect). The two ship
+together; `PROTEOS_K8S_GUEST_AUTH=0` is the bridge for a fleet that cannot.
+
+### Departures from the plan
+
+1. **The probe is an experiment, not an inspection.** The plan said "create a
+   canary pod with a deny policy and confirm a connection is refused". A
+   refused connection is also what a canary that never started, an image that
+   never pulled, or a cluster-agent egress policy that does not permit the
+   canary looks like. So the probe dials the canary under an ALLOW policy
+   first, and only a dial that succeeded and then failed once the policy was
+   rewritten to DENY counts as enforcement — two consecutive failures, because
+   a policy controller programs the datapath asynchronously and one flaky
+   connect must not pass for a verdict.
+2. **The canary has to look like a machine to be reachable at all.** The
+   cluster-agent's own NetworkPolicy permits egress only to the guest ports on
+   pods labelled `managed-by=proteos`. The canary therefore carries that label
+   and listens on 1024, but never the machine `component` label, so `List`
+   and the capacity sum ignore it. Written down because the failure mode is
+   the probe reporting a dead network on a healthy cluster.
+3. **The guest secret is per BOOT, keyed by pod UID.** The plan said "passes at
+   pod creation"; the question it did not answer is what an idempotent ensure
+   against a running pod does. Rotating then would leave the guest holding a
+   token the driver no longer presents, so the Secret is written only on the
+   pod-create path, and the driver's token cache is keyed by the pod's UID so
+   a recreated pod can never be answered from the previous boot's entry.
+4. **Every listener is gated, loopback included — so the readiness probe
+   presents the token.** Exempting 127.0.0.1 would have kept the curl probe
+   but left the guest's own `/control` endpoint open to any process in the
+   pod. The probe now speaks over bash's `/dev/tcp` and reads the token from
+   the container's env, which an exec probe inherits even though the
+   guest-agent removes the variable from ITS environment on startup.
+5. **The token travels by Secret reference, never inline**, so `kubectl get pod
+   -o yaml` does not print it, and the Role gets `secrets` get/create/update/
+   delete but deliberately no `list`.
+6. **dm-crypt dropped**, PodSecurity stays `baseline` — both for the reason in
+   the stage description: neither is compatible with a root-in-sandbox guest
+   on gVisor, which is the recommended configuration.
+7. **The kind overlay narrows the agent's preview allowlist** (3000–8080) so
+   the control-plane e2e can tell the agent's allowlist apart from the control
+   plane's: 8080 is served, 9000 is minted by the control plane and refused by
+   the agent. Production leaves both at the defaults.
+
+### What the kind e2e found this time
+
+0. **A machine mid-ensure looked stopped, and the control plane called that a
+   failed boot.** Only the new control-plane suite could find it: the driver
+   suite polls a machine after its ensure returns, while the poller polls the
+   machine it is provisioning concurrently with the ensure it issued. An
+   ensure creates the PVC, the policy, the Secret and then the pod, and a
+   Status that lands in between sees a volume and no pod — which is exactly
+   what a stopped machine is. The first control-plane test passed on the
+   poller's tick timing; the second did not. The driver now tracks in-flight
+   ensures in memory and reports `creating` for that window (also the window
+   where a terminal pod is being replaced). Process-local, so it does not
+   violate "the API server is the record": if the agent restarts mid-ensure
+   the control plane re-ensures.
+1. **`net.Pipe` cannot stand in for a guest in a `DialGuest` test.** The
+   driver writes its preamble before returning the connection, and an
+   unbuffered pipe blocks that write until the test reads — which it cannot do
+   until `DialGuest` returns. The dialer test helper is a real loopback
+   listener for that reason.
+2. kind has enforced NetworkPolicy since v0.24 (kube-network-policies), which
+   the earlier e2e comments had assumed without saying so. It means the probe
+   is asserted in CI for free, and that every earlier kind run had in fact
+   been exercising enforced policies.

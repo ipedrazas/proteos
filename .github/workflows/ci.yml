@@ -205,9 +205,12 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: nodeagent/go.mod
+          # The script also runs a control-plane test binary in front of the
+          # cluster-agent (K5), so its module cache is warmed too.
           cache-dependency-path: |
             go.work.sum
             nodeagent/go.sum
+            controlplane/go.sum
 
       # install_only: the script creates and tears down its own cluster, so the
       # action must not create one.

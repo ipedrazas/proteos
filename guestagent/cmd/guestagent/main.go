@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	guestwire "github.com/tavon-ai/proteos/guestagent/api"
+	"github.com/tavon-ai/proteos/guestagent/internal/authlisten"
 	"github.com/tavon-ai/proteos/guestagent/internal/config"
 	"github.com/tavon-ai/proteos/guestagent/internal/ctlchan"
 	"github.com/tavon-ai/proteos/guestagent/internal/listen"
@@ -61,10 +63,26 @@ func run() error {
 		return err
 	}
 
+	// Every listener goes through the same gate. With a token configured (the
+	// Kubernetes backend) a connection must open with the shared-secret preamble
+	// or it is closed before the protocol behind it sees a byte; without one
+	// (vsock, dev unix sockets) the transport is the boundary and gate is a
+	// no-op. One function so the four listeners cannot disagree about it.
+	gate := func(ln net.Listener) net.Listener {
+		if cfg.AuthToken == "" {
+			return ln
+		}
+		return authlisten.Wrap(ln, cfg.AuthToken)
+	}
+	if cfg.AuthToken != "" {
+		slog.Info("guest: listener authentication enabled (PROTEOS_GUEST_AUTH_TOKEN)")
+	}
+
 	ln, err := listen.Listen(cfg.Listen)
 	if err != nil {
 		return err
 	}
+	ln = gate(ln)
 	defer ln.Close()
 
 	// Resolve the unprivileged user that PTY sessions run as (Phase 8). The agent
@@ -187,6 +205,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
+		webLn = gate(webLn)
 		defer webLn.Close()
 
 		args := webfwd.DefaultCodeServerArgs(cfg.WebBackend, homeDir, workspaceRoot)
@@ -229,6 +248,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
+		previewLn = gate(previewLn)
 		defer previewLn.Close()
 
 		fwd := previewfwd.New(previewLn)
@@ -252,6 +272,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
+		sshLn = gate(sshLn)
 		defer sshLn.Close()
 
 		fwd := sshfwd.New(sshLn, cfg.SSHBackend)

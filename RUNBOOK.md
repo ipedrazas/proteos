@@ -870,10 +870,17 @@ misbehaves.
 | Machine stuck in `creating` | The pod is Pending or not Ready. `kubectl -n proteos-machines describe pod m-<id8>` — the kubelet's own reason (`Insufficient cpu`, `ImagePullBackOff`, `FailedScheduling` on the RuntimeClass) is also copied into the machine's `reason` in `GET /v1/machines/{id}` |
 | Machine reports `error` immediately after starting | A crash-looping container. `kubectl -n proteos-machines logs m-<id8> -c guest` (or `-c sshd`); the driver checks CrashLoopBackOff explicitly, so a broken machine says so instead of sitting in `creating` forever |
 | Terminal works, SSH does not | The sshd sidecar. `kubectl -n proteos-machines logs m-<id8> -c sshd`. Its most likely failure is a home mismatch: sshd reads `~/.ssh/authorized_keys` from the passwd home, which the guest image points at the persisted home — `kubectl exec … -c sshd -- getent passwd dev` must show a path under `/persist` |
+| Cluster-agent crash-loops at startup with `the CNI does not enforce NetworkPolicy` | It is telling the truth: its canary stayed reachable after its policy denied all ingress, so every machine's terminal would be open to every pod. Install a policy-enforcing CNI. `PROTEOS_K8S_SKIP_NETPOL_PROBE=1` overrides — only with that understood |
+| Cluster-agent crash-loops with `the canary pod was never reachable` | The probe could not even run its control: the canary image did not start (`kubectl -n proteos-machines get pods -l app.kubernetes.io/component=netpol-canary`, usually `ImagePullBackOff` on `registry.k8s.io` — set `PROTEOS_K8S_NETPOL_PROBE_IMAGE`), or pod-to-pod traffic from the agent is blocked outright, in which case machines would be unreachable too |
+| Machine `creating` forever, guest logs full of `authlisten: rejected connection` | The guest image predates the listener preamble, so the readiness probe (which presents it) and every dial are refused. Upgrade the image, or set `PROTEOS_K8S_GUEST_AUTH=0` on the agent until you can |
+| Terminal `502` on a machine that is `running`, agent log says `read guest secret … not found` | The machine's `m-<id8>-guest` Secret is gone. Nothing but Destroy deletes it, so something else did; stop and start the machine to mint a new one |
 
 **NetworkPolicy troubleshooting.** Machine ingress is restricted to the
 cluster-agent pod, so the first question is always whether the policy is being
-enforced at all — an unenforced policy fails open and nothing reports it:
+enforced at all — an unenforced policy fails open and nothing in the data path
+reports it. The agent answers that question itself at every start (`kubectl -n
+proteos-system logs deploy/proteos-cluster-agent | grep "NetworkPolicy
+enforcement"`); to check by hand:
 
 ```bash
 kubectl -n proteos-machines get networkpolicy                 # one per machine, plus default-deny

@@ -113,6 +113,27 @@ spec:
             # image_ref. K3 makes the control plane send one.
             - name: PROTEOS_K8S_DEFAULT_IMAGE
               value: ""
+
+            # K5: the two controls that stand between another pod and a
+            # machine's terminal, and the switches that turn them off.
+            #
+            # Guest listener auth. Every machine is started with a per-boot
+            # secret the agent presents first on every connection; the guest
+            # closes anything else. "0" disables it — only for a fleet whose
+            # guest image predates the preamble.
+            - name: PROTEOS_K8S_GUEST_AUTH
+              value: "1"
+            # At startup the agent creates a canary pod, denies it all ingress
+            # by NetworkPolicy, and refuses to start if it can still reach it:
+            # a CNI that does not enforce policy would otherwise expose every
+            # machine to every pod and report nothing. "1" skips the probe.
+            - name: PROTEOS_K8S_SKIP_NETPOL_PROBE
+              value: ""
+            # The canary's listener image; override on a cluster that cannot
+            # reach registry.k8s.io (anything that accepts TCP on 1024 works if
+            # its command is adjusted in the driver — default is agnhost netexec).
+            - name: PROTEOS_K8S_NETPOL_PROBE_IMAGE
+              value: ""
           volumeMounts:
             - name: tls
               mountPath: /etc/proteos/tls

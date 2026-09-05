@@ -168,6 +168,21 @@ if ! kubectl -n "$AGENT_NS" rollout status deploy/proteos-cluster-agent --timeou
 fi
 ok "cluster-agent ready"
 
+# The agent only becomes ready after its preflight, and the preflight's last
+# step is the NetworkPolicy enforcement probe (K5): a canary pod, denied all
+# ingress by policy, that the agent must fail to reach. kind ≥ 0.24 enforces
+# policy out of the box (kube-network-policies), so on this cluster the probe
+# must have PASSED — and its verdict is the only place CI asserts that the CNI
+# under test actually blocks pod-to-machine traffic, rather than that the driver
+# merely writes the objects. Reaching "ready" already proves the agent did not
+# refuse to start; this proves it did not skip the question.
+if ! kubectl -n "$AGENT_NS" logs deploy/proteos-cluster-agent | grep -q "NetworkPolicy enforcement verified"; then
+  kubectl -n "$AGENT_NS" logs deploy/proteos-cluster-agent --tail=40 || true
+  FAILED=1
+  die "the cluster-agent came up without verifying NetworkPolicy enforcement"
+fi
+ok "NetworkPolicy enforcement verified by the agent's canary"
+
 # --- 5. port-forward --------------------------------------------------------
 log "port-forwarding the agent to 127.0.0.1:$LOCAL_PORT"
 kubectl -n "$AGENT_NS" port-forward svc/proteos-cluster-agent "$LOCAL_PORT:9090" >"$WORK/pf.log" 2>&1 &
@@ -198,6 +213,33 @@ if [[ $RC -ne 0 ]]; then
   die "the kind_e2e suite failed (rc=$RC)"
 fi
 
+# --- 6b. the control plane in front of it -----------------------------------
+# The suite above drives the agent as the control plane would. This one IS the
+# control plane: an in-process instance with the cluster-agent as its only host
+# (driver=kubernetes) and an image-only template, so the K3 placement path, the
+# poweroff-not-hibernate stop, and the machine-web preview proxy with both port
+# allowlists run against a real machine. It pins the agent's certificate the way
+# production does (PROTEOS_NODE_CA_FILE), which is why the cert path is passed.
+#
+# Postgres comes from testcontainers (or TEST_DATABASE_URL when set), so this
+# needs docker — which it has, since kind does too.
+log "running the control-plane kind_e2e suite"
+set +e
+(
+  cd "$REPO_ROOT/controlplane" &&
+    PROTEOS_E2E_AGENT_URL="https://127.0.0.1:$LOCAL_PORT" \
+      PROTEOS_E2E_AGENT_TOKEN="$TOKEN" \
+      PROTEOS_E2E_AGENT_CA="$WORK/tls.crt" \
+      PROTEOS_E2E_GUEST_IMAGE="$GUEST_IMAGE" \
+      go test -tags=kind_e2e -count=1 -failfast -timeout 30m -v ./internal/httpapi/ -run 'TestKind'
+)
+RC=$?
+set -e
+if [[ $RC -ne 0 ]]; then
+  FAILED=1
+  die "the control-plane kind_e2e suite failed (rc=$RC)"
+fi
+
 # --- 7. no leaks ------------------------------------------------------------
 # Every test destroys its machine, so the namespace must end up empty. A pod or
 # PVC left behind means Destroy is not the cleanup the control plane believes
@@ -212,7 +254,10 @@ fi
 # that is wedged on a finalizer, which a snapshot count never would.
 log "waiting for destroyed machine objects to finish terminating"
 leak_count() {
-  kubectl -n "$MACHINE_NS" get pods,pvc,networkpolicies \
+  # secrets: the per-machine guest listener token (K5) leaves with Destroy too.
+  # The netpol canary also carries the managed-by label, so a probe that failed
+  # to clean up after itself is caught here as well.
+  kubectl -n "$MACHINE_NS" get pods,pvc,networkpolicies,secrets \
     -l app.kubernetes.io/managed-by=proteos --no-headers 2>/dev/null | grep -c . || true
 }
 for _ in $(seq 1 60); do
@@ -222,7 +267,7 @@ done
 
 LEAKED="$(leak_count)"
 if [[ "$LEAKED" != "0" ]]; then
-  kubectl -n "$MACHINE_NS" get pods,pvc,networkpolicies -l app.kubernetes.io/managed-by=proteos
+  kubectl -n "$MACHINE_NS" get pods,pvc,networkpolicies,secrets -l app.kubernetes.io/managed-by=proteos
   FAILED=1
   die "$LEAKED machine object(s) still present two minutes after Destroy"
 fi

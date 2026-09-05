@@ -161,6 +161,10 @@ func buildDriver(cfg *config.Config) (driver.Driver, error) {
 			DNSNamespace:    cfg.K8sDNSNamespace,
 			DefaultImage:    cfg.K8sDefaultImage,
 			CPURequestRatio: cfg.K8sCPURequestRatio,
+
+			DisableGuestAuth: !cfg.K8sGuestAuth,
+			SkipNetpolProbe:  cfg.K8sSkipNetpolProbe,
+			NetpolProbeImage: cfg.K8sNetpolProbeImage,
 		}), nil
 	default:
 		return nil, errors.New("unknown PROTEOS_AGENT_DRIVER: " + cfg.Driver)

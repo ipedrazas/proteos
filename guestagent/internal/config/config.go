@@ -98,6 +98,21 @@ type Config struct {
 	// sshd binds and the forward dials. Default 127.0.0.1:22 (the baked
 	// sshd_config's ListenAddress).
 	SSHBackend string
+
+	// --- K5: guest listener authentication -----------------------------------
+
+	// AuthToken (PROTEOS_GUEST_AUTH_TOKEN), when set, gates EVERY listener
+	// (terminal, web, preview, ssh) behind a one-line shared-secret preamble
+	// (see internal/authlisten). The node-agent that runs this machine knows the
+	// token and writes it first on each connection; anything else is closed
+	// before it reaches a protocol. Empty ⇒ no gate, which is right where the
+	// transport itself is the boundary (vsock on Firecracker, a 0600 unix socket
+	// in dev). The Kubernetes driver always sets it: there the listeners are TCP
+	// sockets on a pod IP, and NetworkPolicy alone is a control that fails open.
+	//
+	// Load removes the variable from the process environment after reading it,
+	// so it can never leak into a session or a supervised child by accident.
+	AuthToken string
 }
 
 // Load reads and validates configuration from the environment.
@@ -120,7 +135,13 @@ func Load() (*Config, error) {
 
 		SSHListen:  os.Getenv("PROTEOS_GUEST_SSH_LISTEN"),
 		SSHBackend: getenv("PROTEOS_GUEST_SSH_BACKEND", "127.0.0.1:22"),
+
+		AuthToken: os.Getenv("PROTEOS_GUEST_AUTH_TOKEN"),
 	}
+	// The token is for this process only. Sessions get a curated environment
+	// rather than ours, but a future os.Environ() anywhere would hand it to a
+	// user's shell; removing it here makes that impossible rather than unlikely.
+	_ = os.Unsetenv("PROTEOS_GUEST_AUTH_TOKEN")
 	if c.ScrollbackKiB < 1 {
 		return nil, fmt.Errorf("PROTEOS_GUEST_SCROLLBACK_KIB must be ≥ 1, got %d", c.ScrollbackKiB)
 	}

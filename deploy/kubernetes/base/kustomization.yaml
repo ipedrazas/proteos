@@ -18,6 +18,10 @@ resources:
   # runtimeclass-gvisor.yaml is an EXAMPLE: a RuntimeClass names a handler that
   # must already be installed on the nodes, and on GKE the Sandbox feature
   # creates it for you. Add it here only if you installed runsc yourself.
+  #
+  # quota-example.yaml is an EXAMPLE too: a ResourceQuota + LimitRange for the
+  # machine namespace, with numbers that are necessarily someone's guess. Copy
+  # it into your overlay with yours (K5).
 
 labels:
   - includeSelectors: false

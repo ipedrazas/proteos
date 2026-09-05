@@ -193,6 +193,22 @@ type Config struct {
 	// before K3 teaches the control plane to send one.
 	K8sDefaultImage string
 
+	// K8sGuestAuth (PROTEOS_K8S_GUEST_AUTH, default on; "0" disables) starts
+	// every machine with a per-boot listener secret the agent presents first on
+	// each tunnel connection, so NetworkPolicy is not the only thing between
+	// another pod and a machine's terminal (K5). Off only for a guest image
+	// that predates the preamble.
+	K8sGuestAuth bool
+
+	// K8sSkipNetpolProbe (PROTEOS_K8S_SKIP_NETPOL_PROBE=1) skips the startup
+	// canary that proves the CNI enforces NetworkPolicy. Without the probe an
+	// unenforced policy is invisible — the objects exist and do nothing.
+	K8sSkipNetpolProbe bool
+
+	// K8sNetpolProbeImage (PROTEOS_K8S_NETPOL_PROBE_IMAGE) is the canary's
+	// listener image; empty ⇒ the driver's default (agnhost from registry.k8s.io).
+	K8sNetpolProbeImage string
+
 	// MgmtIfaces (PROTEOS_AGENT_MGMT_IFACES, comma-separated) are the host
 	// interfaces allowed to reach SSH and the agent API through the firecracker
 	// driver's fail-closed nftables input chain. The token "egress" resolves to
@@ -242,6 +258,11 @@ func Load() (*Config, error) {
 		K8sDNSNamespace:    getenv("PROTEOS_K8S_DNS_NAMESPACE", "kube-system"),
 		K8sDefaultImage:    os.Getenv("PROTEOS_K8S_DEFAULT_IMAGE"),
 		K8sCPURequestRatio: getenvFloat("PROTEOS_K8S_CPU_REQUEST_RATIO", 1.0),
+		// On unless explicitly "0": the safe default must survive an unset
+		// variable, which is what a Deployment predating this setting has.
+		K8sGuestAuth:        lookupenv("PROTEOS_K8S_GUEST_AUTH", "1") != "0",
+		K8sSkipNetpolProbe:  getenvBool("PROTEOS_K8S_SKIP_NETPOL_PROBE"),
+		K8sNetpolProbeImage: os.Getenv("PROTEOS_K8S_NETPOL_PROBE_IMAGE"),
 	}
 
 	if c.K8sCPURequestRatio <= 0 || c.K8sCPURequestRatio > 1 {

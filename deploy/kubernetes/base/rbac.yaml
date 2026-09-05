@@ -36,6 +36,13 @@ rules:
   - apiGroups: [networking.k8s.io]
     resources: [networkpolicies]
     verbs: [get, list, watch, create, update, delete]
+  # The per-machine guest listener token (K5): one Secret per machine, minted on
+  # every boot and read back on every tunnel dial. No `list`: the driver always
+  # knows the name it wants, and a Role that can enumerate every Secret in the
+  # namespace is broader than one that can read the ones it wrote.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, create, update, delete]
   # Read-back of events for diagnosing a pod that will not schedule.
   - apiGroups: [""]
     resources: [events]

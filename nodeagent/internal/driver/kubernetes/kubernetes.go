@@ -36,6 +36,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net"
 	"regexp"
 	"strings"
 	"sync"
@@ -183,6 +184,26 @@ type Config struct {
 	// and a PVC is pinned by the pvc-protection finalizer while a pod still
 	// mounts it — so "create the replacement" has to mean "wait, then create".
 	DeleteWaitTimeout time.Duration
+
+	// DisableGuestAuth turns OFF the per-machine listener secret (K5, auth.go):
+	// machines are then reachable by anything the NetworkPolicy lets through,
+	// with no second control. The zero value is the safe one. It exists for a
+	// fleet whose guest image predates the preamble and cannot yet be upgraded.
+	DisableGuestAuth bool
+
+	// SkipNetpolProbe turns OFF the startup NetworkPolicy enforcement probe
+	// (probe.go). The agent then starts on a CNI that may silently ignore every
+	// machine's policy. Loud at startup; for clusters where the operator has
+	// verified enforcement by other means or cannot run the canary image.
+	SkipNetpolProbe bool
+
+	// NetpolProbeImage is the canary listener image; empty ⇒
+	// DefaultNetpolProbeImage.
+	NetpolProbeImage string
+
+	// NetpolProbeEnforceTimeout bounds how long the probe waits for a deny
+	// policy to take effect. Zero ⇒ a production default; tests shorten it.
+	NetpolProbeEnforceTimeout time.Duration
 }
 
 // Driver runs machines as pods. It holds no per-machine state: every method is
@@ -191,9 +212,33 @@ type Driver struct {
 	client kubernetes.Interface
 	cfg    Config
 
+	// dial opens the TCP connections DialGuest and the netpol probe make to
+	// pod IPs. A plain net.Dialer in production; tests substitute one.
+	dial func(ctx context.Context, network, addr string) (net.Conn, error)
+
 	mu       sync.Mutex
 	capCache driver.Capacity
 	capAt    time.Time
+
+	// tokens caches each machine's guest listener token by pod UID (auth.go).
+	// Not machine state — it is a read-through cache of a Secret and rebuilds
+	// itself on the first dial after a restart.
+	tokens struct {
+		sync.Mutex
+		m map[string]guestToken
+	}
+
+	// ensuring holds the machines with an EnsureRunning in flight. An ensure
+	// creates the PVC, the policy, the Secret and then the pod, and a Status
+	// that lands in between sees "a volume and no pod" — which is exactly what a
+	// STOPPED machine looks like. The control-plane poller does land there: it
+	// polls a provisioning machine concurrently with the ensure it issued, and
+	// "stopped during boot" is a failure to it. Process-local, not a record: if
+	// the agent restarts mid-ensure the control plane's retry re-ensures.
+	ensuring struct {
+		sync.Mutex
+		m map[string]int
+	}
 }
 
 var (
@@ -220,7 +265,42 @@ func New(client kubernetes.Interface, cfg Config) *Driver {
 	if cfg.CapacityTTL == 0 {
 		cfg.CapacityTTL = 15 * time.Second
 	}
-	return &Driver{client: client, cfg: cfg}
+	d := &Driver{client: client, cfg: cfg}
+	d.dial = (&net.Dialer{Timeout: cfg.DialTimeout}).DialContext
+	d.tokens.m = make(map[string]guestToken)
+	d.ensuring.m = make(map[string]int)
+	return d
+}
+
+// beginEnsure marks a machine as mid-ensure until the returned func is called.
+// Counted, not boolean: two concurrent ensures for one machine (the poller and
+// a user's Start racing) must not have the first to finish clear the other's.
+func (d *Driver) beginEnsure(machineID string) func() {
+	d.ensuring.Lock()
+	d.ensuring.m[machineID]++
+	d.ensuring.Unlock()
+	return func() {
+		d.ensuring.Lock()
+		if d.ensuring.m[machineID]--; d.ensuring.m[machineID] <= 0 {
+			delete(d.ensuring.m, machineID)
+		}
+		d.ensuring.Unlock()
+	}
+}
+
+func (d *Driver) isEnsuring(machineID string) bool {
+	d.ensuring.Lock()
+	defer d.ensuring.Unlock()
+	return d.ensuring.m[machineID] > 0
+}
+
+// WithDialer substitutes the function DialGuest and the NetworkPolicy probe
+// use to open TCP connections to pod IPs. For tests: a fake cluster's pod IPs
+// route nowhere, and this is how the preamble the driver writes, and the
+// probe's verdict on a CNI that does or does not enforce policy, are observed.
+func (d *Driver) WithDialer(dial func(ctx context.Context, network, addr string) (net.Conn, error)) *Driver {
+	d.dial = dial
+	return d
 }
 
 // dns1123Label matches a name Kubernetes will accept for an object.
@@ -287,6 +367,9 @@ func (d *Driver) EnsureRunning(ctx context.Context, spec driver.VMSpec) (string,
 			driver.ErrBadSpec, spec.MachineID)
 	}
 
+	// From here until the pod exists, Status must say "creating", not "stopped".
+	defer d.beginEnsure(spec.MachineID)()
+
 	if err := d.ensurePVC(ctx, spec); err != nil {
 		return "", err
 	}
@@ -340,6 +423,15 @@ func (d *Driver) ensurePod(ctx context.Context, spec driver.VMSpec, image string
 		}
 	case !apierrors.IsNotFound(err):
 		return fmt.Errorf("get pod %s: %w", name, err)
+	}
+
+	// A fresh listener token for the new pod, written BEFORE the pod exists:
+	// the container's env references the Secret, and a pod whose Secret is
+	// missing sits in CreateContainerConfigError.
+	if d.guestAuthEnabled() {
+		if err := d.ensureGuestSecret(ctx, spec); err != nil {
+			return err
+		}
 	}
 
 	pod := d.buildPod(spec, image)
@@ -471,8 +563,9 @@ func (d *Driver) Stop(ctx context.Context, machineID string, mode driver.StopMod
 	return nil
 }
 
-// Destroy removes every trace of a machine: pod, NetworkPolicy and PVC. It is
-// idempotent — a NotFound on any of the three is success, so a retried destroy
+// Destroy removes every trace of a machine: pod, NetworkPolicy, PVC and the
+// guest listener Secret. It is
+// idempotent — a NotFound on any of them is success, so a retried destroy
 // (or one racing a partially-completed earlier attempt) still converges.
 func (d *Driver) Destroy(ctx context.Context, machineID string) error {
 	name := resourceName(machineID)
@@ -496,7 +589,11 @@ func (d *Driver) Destroy(ctx context.Context, machineID string) error {
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete pvc %s: %w", pvcName(machineID), err)
 	}
-	return nil
+
+	// Unconditionally, not only when auth is enabled: a fleet that turned auth
+	// off after running with it still has the Secrets, and Destroy is the only
+	// thing that ever removes them.
+	return d.deleteGuestSecret(ctx, machineID)
 }
 
 // Reattach is a no-op beyond a sanity log. The firecracker and dev drivers have
