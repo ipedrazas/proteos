@@ -34,3 +34,11 @@ spec:
             # sending image_ref on each request.
             - name: PROTEOS_K8S_DEFAULT_IMAGE
               value: proteos-guest:e2e
+            # A narrowed preview allowlist, so the control-plane e2e can tell the
+            # agent's allowlist apart from the control plane's: 8080 is admitted
+            # by both, 9000 by the control plane (default range) but not here.
+            # Production leaves both at the defaults.
+            - name: PROTEOS_PREVIEW_PORT_MIN
+              value: "3000"
+            - name: PROTEOS_PREVIEW_PORT_MAX
+              value: "8080"
