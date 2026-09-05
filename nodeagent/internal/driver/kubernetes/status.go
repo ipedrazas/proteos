@@ -30,10 +30,23 @@ func (d *Driver) Status(ctx context.Context, machineID string) (driver.Status, e
 		return driver.Status{}, fmt.Errorf("get pod %s: %w", resourceName(machineID), err)
 	}
 
-	// No live pod. The machine still exists if its volume does — that is the
-	// difference between a stop and a destroy. A pod that is merely terminating
-	// counts as gone: it has been told to die and cannot serve a session, and
-	// the API server keeps it visible for the whole grace period.
+	// No live pod — but if an ensure for this machine is in flight, that is the
+	// window between the volume and the pod being created (or a terminal pod
+	// being replaced), not a stopped machine. Say so. The control-plane poller
+	// asks exactly here, and reads "stopped during boot" as a failed boot.
+	if d.isEnsuring(machineID) {
+		return driver.Status{
+			MachineID: machineID,
+			State:     api.StateCreating,
+			Handle:    d.handle(machineID),
+			Boot:      api.BootCold,
+		}, nil
+	}
+
+	// The machine still exists if its volume does — that is the difference
+	// between a stop and a destroy. A pod that is merely terminating counts as
+	// gone: it has been told to die and cannot serve a session, and the API
+	// server keeps it visible for the whole grace period.
 	if !d.pvcExists(ctx, machineID) {
 		return driver.Status{}, driver.ErrUnknownMachine
 	}

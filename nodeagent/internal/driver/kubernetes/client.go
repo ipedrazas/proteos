@@ -45,16 +45,21 @@ var requiredVerbs = []struct{ resource, verb string }{
 	{"persistentvolumeclaims", "create"}, {"persistentvolumeclaims", "delete"},
 	{"networkpolicies", "get"}, {"networkpolicies", "list"},
 	{"networkpolicies", "create"}, {"networkpolicies", "update"}, {"networkpolicies", "delete"},
+	// The per-machine guest listener token (K5). No `list`: the driver always
+	// knows the name it wants, and a Role that can enumerate every Secret in
+	// the namespace is broader than a Role that can read the ones it wrote.
+	{"secrets", "get"}, {"secrets", "create"}, {"secrets", "update"}, {"secrets", "delete"},
 }
 
 // Preflight fails fast on the misconfigurations that would otherwise surface as
 // a confusing per-machine error hours later: a missing namespace, a Role that
-// does not actually grant what the driver needs, or a RuntimeClass that was
-// named but never installed.
+// does not actually grant what the driver needs, a RuntimeClass that was named
+// but never installed — and, last because it is the only one that takes real
+// time, a CNI that accepts NetworkPolicy objects without enforcing them.
 //
-// It deliberately does NOT verify that the CNI enforces NetworkPolicy — that
-// needs a live canary pod and belongs to the deployment story (K2). What it can
-// check cheaply, it checks at startup.
+// That last check is the one that matters most and the one nothing else can
+// make: an unenforced policy is indistinguishable from an enforced one by
+// inspection. See probe.go. It is skippable (SkipNetpolProbe), loudly.
 func (d *Driver) Preflight(ctx context.Context) error {
 	if _, err := d.client.CoreV1().Namespaces().Get(ctx, d.cfg.Namespace, metav1.GetOptions{}); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -103,6 +108,22 @@ func (d *Driver) Preflight(ctx context.Context) error {
 		slog.Warn("kubernetes: PROTEOS_K8S_AGENT_POD_LABELS is unset, so machine NetworkPolicies " +
 			"cannot name the cluster-agent as their ingress peer. Machines will be created with " +
 			"ingress DENIED and will be unreachable. Set it to the cluster-agent Deployment's pod labels.")
+	}
+
+	if d.cfg.DisableGuestAuth {
+		slog.Warn("kubernetes: guest listener authentication is DISABLED (PROTEOS_K8S_GUEST_AUTH=0). " +
+			"NetworkPolicy is the only thing between another pod and a machine's terminal. See SECURITY.md.")
+	}
+
+	if d.cfg.SkipNetpolProbe {
+		slog.Warn("kubernetes: SKIPPING the NetworkPolicy enforcement probe (PROTEOS_K8S_SKIP_NETPOL_PROBE). " +
+			"If this CNI does not enforce policy, every machine's guest ports are reachable from any pod " +
+			"in the cluster and nothing will report it. See SECURITY.md.")
+		return nil
+	}
+	slog.Info("kubernetes: probing NetworkPolicy enforcement with a canary pod", "namespace", d.cfg.Namespace, "image", d.canaryImage())
+	if err := d.probeNetworkPolicyEnforcement(ctx); err != nil {
+		return fmt.Errorf("preflight: %w", err)
 	}
 	return nil
 }

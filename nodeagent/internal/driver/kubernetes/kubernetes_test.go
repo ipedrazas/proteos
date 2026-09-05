@@ -400,8 +400,14 @@ func TestReadinessProbeDoesNotCrossTheNetwork(t *testing.T) {
 		t.Fatalf("want an exec probe, got %+v", probe.ProbeHandler)
 	}
 	joined := strings.Join(probe.Exec.Command, " ")
-	if !strings.Contains(joined, "127.0.0.1:1024/healthz") {
+	if !strings.Contains(joined, "127.0.0.1") || !strings.Contains(joined, "1024") || !strings.Contains(joined, "/healthz") {
 		t.Errorf("exec probe does not check the guest-agent's own /healthz over loopback: %q", joined)
+	}
+	// Every listener is gated (K5), the loopback one the probe talks to included,
+	// so the probe must present the token or it would fail against a healthy
+	// guest and no machine would ever report running.
+	if !strings.Contains(joined, api.GuestAuthTag) || !strings.Contains(joined, "$PROTEOS_GUEST_AUTH_TOKEN") {
+		t.Errorf("exec probe does not present the guest auth preamble: %q", joined)
 	}
 }
 

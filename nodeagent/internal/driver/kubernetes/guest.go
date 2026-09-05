@@ -57,16 +57,30 @@ func (d *Driver) DialGuest(ctx context.Context, machineID string, port uint32) (
 		target, preamble = api.GuestPreviewPort, api.PreviewPreamble(port)
 	}
 
+	// The listener auth line goes FIRST, on every port (K5): the guest closes a
+	// connection that opens with anything else, so the preview preamble — and
+	// everything the gateway sends after we return — has to come behind it. Read
+	// before the dial so a Secret that has gone missing is reported as such
+	// rather than as the guest hanging up on us.
+	if d.guestAuthEnabled() {
+		token, err := d.guestTokenFor(ctx, machineID, pod)
+		if err != nil {
+			return nil, err
+		}
+		preamble = api.GuestAuthPreamble(token) + preamble
+	}
+
 	addr := net.JoinHostPort(pod.Status.PodIP, strconv.FormatUint(uint64(target), 10))
-	dialer := net.Dialer{Timeout: d.cfg.DialTimeout}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	dialCtx, cancel := context.WithTimeout(ctx, d.cfg.DialTimeout)
+	defer cancel()
+	conn, err := d.dial(dialCtx, "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("dial guest %s: %w", addr, err)
 	}
 	if preamble != "" {
 		if _, err := conn.Write([]byte(preamble)); err != nil {
 			conn.Close()
-			return nil, fmt.Errorf("write preview preamble: %w", err)
+			return nil, fmt.Errorf("write guest preamble: %w", err)
 		}
 	}
 	return conn, nil

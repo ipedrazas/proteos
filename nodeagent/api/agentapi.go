@@ -117,6 +117,21 @@ func PreviewPreamble(port uint32) string {
 	return strconv.FormatUint(uint64(port), 10) + "\n"
 }
 
+// GuestAuthTag opens the guest listener authentication preamble (K5). On a
+// backend where the guest's listeners are reachable over a network rather than
+// vsock — Kubernetes, where they are TCP sockets on a pod IP — the guest-agent
+// is started with a per-machine secret and closes any connection that does not
+// open with this line: the tag, one space, the token, '\n'. The node-agent that
+// created the machine writes it first on every DialGuest, before the preview
+// preamble when there is one. Like PreviewPreamble it is a guest-agent wire
+// contract (guestagent/internal/authlisten), not a transport artefact.
+const GuestAuthTag = "PROTEOS-GUEST-AUTH"
+
+// GuestAuthPreamble renders the authentication line for token.
+func GuestAuthPreamble(token string) string {
+	return GuestAuthTag + " " + token + "\n"
+}
+
 // UpgradeGuestProto is the token in the Connection/Upgrade headers of the guest
 // tunnel handshake. It is deliberately not "websocket": the node-agent does not
 // terminate the WebSocket, it only relays bytes.

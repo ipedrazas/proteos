@@ -157,7 +157,7 @@ func (d *Driver) buildPod(spec driver.VMSpec, image string) *corev1.Pod {
 			NodeSelector:                  d.cfg.NodeSelector,
 			Volumes:                       volumes,
 			Containers: []corev1.Container{
-				guestContainerSpec(image, d.resourceRequirements(spec)),
+				d.guestContainerSpec(spec, image),
 				sshdContainerSpec(image),
 			},
 		},
@@ -175,7 +175,24 @@ func (d *Driver) buildPod(spec driver.VMSpec, image string) *corev1.Pod {
 
 // guestContainerSpec is the machine itself: the guest agent as PID 1, listening
 // on the four guest ports the node-agent tunnel dials on the pod IP.
-func guestContainerSpec(image string, resources corev1.ResourceRequirements) corev1.Container {
+func (d *Driver) guestContainerSpec(spec driver.VMSpec, image string) corev1.Container {
+	env := guestEnv()
+	probe := healthzProbeCommand()
+	if d.guestAuthEnabled() {
+		// The listener token, by reference: the pod spec names the Secret, never
+		// the value, so `kubectl get pod -o yaml` does not print it. The probe
+		// has to present it too — every listener is gated, loopback included.
+		env = append(env, corev1.EnvVar{
+			Name: guestAuthEnv,
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: guestSecretName(spec.MachineID)},
+					Key:                  guestSecretKey,
+				},
+			},
+		})
+		probe = authedHealthzProbeCommand()
+	}
 	return corev1.Container{
 		Name:            guestContainer,
 		Image:           image,
@@ -188,12 +205,12 @@ func guestContainerSpec(image string, resources corev1.ResourceRequirements) cor
 			// loopback inside this pod and the forward is the only way in.
 			{Name: "ssh", ContainerPort: int32(api.GuestSSHPort)},
 		},
-		Env: guestEnv(),
+		Env: env,
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: persistVolume, MountPath: persistMountPath},
 			{Name: runVolume, MountPath: runMountPath},
 		},
-		Resources: resources,
+		Resources: d.resourceRequirements(spec),
 		// Readiness gates DialGuest: the driver refuses to tunnel to a pod
 		// whose guest-agent is not answering /healthz yet, which is what keeps
 		// a "running" machine actually attachable.
@@ -211,7 +228,7 @@ func guestContainerSpec(image string, resources corev1.ResourceRequirements) cor
 		// else".
 		ReadinessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
-				Exec: &corev1.ExecAction{Command: healthzProbeCommand()},
+				Exec: &corev1.ExecAction{Command: probe},
 			},
 			InitialDelaySeconds: 1,
 			PeriodSeconds:       3,
@@ -412,6 +429,22 @@ func healthzProbeCommand() []string {
 		"curl", "--fail", "--silent", "--show-error", "--max-time", "2",
 		"http://127.0.0.1:" + strconv.FormatUint(uint64(api.GuestTerminalPort), 10) + "/healthz",
 	}
+}
+
+// authedHealthzProbeCommand is healthzProbeCommand for a guest whose listeners
+// are gated (K5). curl cannot put a line in front of its request, so the probe
+// speaks over bash's /dev/tcp: the auth preamble, then a minimal HTTP/1.0
+// request, then it reads the status line and requires a 200. The token comes
+// from the container's own environment — an exec probe inherits the spec's env,
+// even though the guest-agent removes the variable from ITS environment on
+// startup. bash rather than sh for the same reason as the sshd probe: /dev/tcp
+// is a bash feature and the image's /bin/sh is dash.
+func authedHealthzProbeCommand() []string {
+	port := strconv.FormatUint(uint64(api.GuestTerminalPort), 10)
+	script := `exec 3<>/dev/tcp/127.0.0.1/` + port + ` && ` +
+		`printf '` + api.GuestAuthTag + ` %s\nGET /healthz HTTP/1.0\r\nHost: localhost\r\n\r\n' "$` + guestAuthEnv + `" >&3 && ` +
+		`read -r -t 2 -u 3 status && case "$status" in *" 200 "*) exit 0 ;; *) exit 1 ;; esac`
+	return []string{"bash", "-c", script}
 }
 
 func ptr[T any](v T) *T { return &v }
