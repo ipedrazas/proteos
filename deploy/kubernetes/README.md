@@ -23,6 +23,7 @@ control plane ──TLS+bearer──▶ cluster-agent (Deployment, proteos-syste
 | `base/service.yaml` | ClusterIP :9090 |
 | `base/networkpolicy.yaml` | Default-deny for `proteos-machines`; the agent's own policy |
 | `base/runtimeclass-gvisor.yaml` | Example RuntimeClass (**not** applied by default — see below) |
+| `base/quota-example.yaml` | Example ResourceQuota + LimitRange for the machine namespace (**not** applied by default; copy into your overlay with your numbers) |
 | `overlays/kind/` | The e2e shape: no RuntimeClass, locally-loaded images. Used by `e2e-kind.sh`, not for production |
 | `overlays/k3s/` | A self-hosted k3s cluster: LoadBalancer Service, local-path storage, k3s's CIDRs, the gvisor RuntimeClass |
 | `gvisor-k3s.sh` | Installs runsc on a k3s node and proves a pod really runs sandboxed |
@@ -43,10 +44,15 @@ deploy/kubernetes/e2e-kind.sh          # create, test, tear down
 deploy/kubernetes/e2e-kind.sh --keep   # leave the cluster up to poke at
 ```
 
-It is a **functional** test, not an isolation test — kind has no gVisor, so the
+It is a **functional** test, not a sandbox test — kind has no gVisor, so the
 overlay disables the RuntimeClass. What it does prove is the part unit tests
 cannot: that pods schedule, PVCs bind and survive a stop, the guest tunnel
-reaches the pod IP, and the RBAC in `base/rbac.yaml` is sufficient.
+reaches the pod IP through the authenticated listeners, and the RBAC in
+`base/rbac.yaml` is sufficient. Because kind ≥ 0.24 enforces NetworkPolicy, the
+agent's startup canary runs for real here and the script asserts its verdict;
+that is where CI proves the CNI under test blocks pod-to-machine traffic. It
+then stands a control plane up in front of the agent (`controlplane/…/
+kind_e2e_test.go`) for the placement path and the preview proxy.
 
 ## Before you apply
 
@@ -81,17 +87,37 @@ installed.
   what you are giving up — see `SECURITY.md`.
 
 **3. A CNI that enforces NetworkPolicy.** Every machine's ingress is restricted
-to the cluster-agent pod, and that restriction is the only thing between one
-tenant's pod and another tenant's terminal. On a CNI that ignores
-NetworkPolicy (plain flannel, some managed defaults) the objects are accepted
-and silently do nothing. Calico, Cilium, Antrea and GKE Dataplane V2 all
-enforce it. Verify before you trust it:
+to the cluster-agent pod. On a CNI that ignores NetworkPolicy (plain flannel,
+some managed defaults) the objects are accepted and silently do nothing.
+Calico, Cilium, Antrea, kube-router, GKE Dataplane V2 and kind ≥ 0.24 all
+enforce it.
+
+The agent checks this itself at startup rather than trusting a list: it creates
+a canary pod in `proteos-machines`, reaches it while a policy permits the
+connection, rewrites the policy to deny all ingress, and **refuses to start if
+it can still connect**. The log line to look for is `NetworkPolicy enforcement
+verified`; the refusal names the fix. The canary runs
+`registry.k8s.io/e2e-test-images/agnhost` — set `PROTEOS_K8S_NETPOL_PROBE_IMAGE`
+on a cluster that cannot pull from there — and takes the machines' node
+selector and pull secret. `PROTEOS_K8S_SKIP_NETPOL_PROBE=1` skips the probe for
+an operator who has verified enforcement some other way; the agent then starts
+with a warning. To check by hand, against a running machine:
 
 ```sh
 kubectl -n proteos-machines run probe --image=curlimages/curl --restart=Never -- \
   sh -c 'curl -m 3 -s http://<machine-pod-ip>:1024/healthz; echo "exit=$?"'
 # Expected: a timeout. A 200 means your CNI is not enforcing policy.
 ```
+
+**3b. The guest's listeners are authenticated anyway.** Policy is a control the
+data path cannot observe, so it is not the only one. Every machine is started
+with a random per-boot secret (a Secret named `m-<id>-guest`, referenced by the
+pod, never inlined) that the cluster-agent writes as the first line of every
+tunnel connection; the guest closes anything that opens differently. This needs
+a guest image that understands the preamble — every image built from this
+repository does. `PROTEOS_K8S_GUEST_AUTH=0` turns it off for an older image,
+and the agent says so at startup. The Role grants `secrets` get/create/update/
+delete in the machine namespace for this; there is deliberately no `list`.
 
 **4. An encrypted StorageClass.** The kubernetes backend cannot use the
 per-machine LUKS volume key (there is no host to `luksOpen` on), so encryption
@@ -102,6 +128,19 @@ encrypted one.
 link-local (cloud metadata) and loopback, but the pod and service CIDRs are
 cluster-specific. Set them, or a machine can reach cluster services on a
 non-RFC1918 range.
+
+**6. A ResourceQuota and LimitRange.** The control plane's scheduler places
+machines from a capacity figure the agent synthesizes; nothing inside the
+cluster caps the namespace unless you do. `base/quota-example.yaml` is the
+shape; the numbers are yours. Machine pods and the preflight canary always
+declare requests and limits, so a compute quota is safe to apply.
+
+Pod Security admission on `proteos-machines` is `enforce: baseline`, with
+`restricted` at audit/warn. It cannot be `restricted`: the guest runs as root
+inside the sandbox with a handful of capabilities so sessions can drop to the
+`dev` user, which `restricted` forbids regardless of RuntimeClass. If your
+cluster's admission configuration exempts a RuntimeClass, gVisor/Kata pods can
+be exempted there; that is an API-server setting, not a namespace label.
 
 ## Quickstart: a self-hosted k3s cluster
 

@@ -1,0 +1,68 @@
+# EXAMPLE — not applied by kustomization.yaml. Copy it into your overlay with
+# numbers that fit your cluster.
+#
+# The machine namespace runs untrusted workloads, and the control plane's
+# scheduler places a machine on a cluster host from a capacity figure the agent
+# synthesizes from node allocatables. Neither of those is a hard limit inside
+# the cluster: a ResourceQuota is. It caps what the namespace as a whole can
+# consume, so a runaway fleet — or a bug in the control plane's placement — can
+# never starve the rest of the cluster.
+#
+# EVERY pod in a namespace with a compute quota must declare requests and
+# limits for the quoted resources, or its creation is rejected. Machine pods and
+# the agent's preflight canary always do (the driver sets both), so this is
+# safe to apply; a debug pod someone `kubectl run`s in here will need them too.
+#
+# When the quota is exhausted a new machine fails at pod creation and the
+# machine reports `error` with the API server's reason ("exceeded quota: ...").
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: proteos-machines
+  namespace: proteos-machines
+  labels:
+    app.kubernetes.io/part-of: proteos
+spec:
+  hard:
+    # Machine count, plus one for the preflight canary.
+    pods: "51"
+    # Compute. requests.cpu is what CPURequestRatio scales; limits.cpu is the
+    # sum of vcpus machines are ALLOWED. Memory is request == limit per machine.
+    requests.cpu: "16"
+    limits.cpu: "64"
+    requests.memory: 128Gi
+    limits.memory: 128Gi
+    # One PVC per machine; requests.storage bounds the fleet's volumes.
+    persistentvolumeclaims: "50"
+    requests.storage: 2Ti
+    # The per-machine guest listener token (K5). One per machine.
+    secrets: "60"
+---
+# A LimitRange bounds ONE pod, where the quota bounds the namespace. The control
+# plane already validates a machine's shape against its template, so this is a
+# backstop rather than the primary control: a spec that slips past the control
+# plane still cannot take a whole node.
+#
+# `max` here must accommodate the sshd sidecar's fixed slice (50m / 64Mi) on
+# top of the machine's own vcpus/memory, and `min` must not exclude the canary.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: proteos-machines
+  namespace: proteos-machines
+  labels:
+    app.kubernetes.io/part-of: proteos
+spec:
+  limits:
+    - type: Container
+      max:
+        cpu: "8"
+        memory: 32Gi
+      min:
+        cpu: 10m
+        memory: 16Mi
+    - type: PersistentVolumeClaim
+      max:
+        storage: 200Gi
+      min:
+        storage: 1Gi
