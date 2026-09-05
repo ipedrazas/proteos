@@ -335,6 +335,40 @@ func TestCapacityUsesDeclaredShapesNotPodRequests(t *testing.T) {
 	}
 }
 
+// A machine whose previous incarnation is still terminating must not be reported
+// as already running. Kubernetes deletions are asynchronous — a pod stays visible
+// for its termination grace period — and adopting the dying one creates nothing,
+// so the pod finishes dying and the machine silently never exists. That is what a
+// start issued straight after a stop does, and it cost a real cluster three
+// minutes of a machine that was never coming.
+func TestEnsureWaitsForATerminatingPredecessor(t *testing.T) {
+	cluster := fakecluster.New(fakecluster.Options{Namespace: testNamespace})
+	d := k8s.New(cluster, k8s.Config{
+		Namespace:         testNamespace,
+		CapacityTTL:       time.Nanosecond,
+		DeleteWaitTimeout: 300 * time.Millisecond, // the wait itself is not under test
+	})
+	ctx := context.Background()
+	const id = "aaaaaaaa-0000-4000-8000-00000000000e"
+
+	if _, err := d.EnsureRunning(ctx, spec(id)); err != nil {
+		t.Fatalf("EnsureRunning: %v", err)
+	}
+	if err := cluster.Terminating(testNamespace, "m-"+id); err != nil {
+		t.Fatalf("Terminating: %v", err)
+	}
+
+	// Nothing clears the deletion here, so the ensure must give up and SAY so
+	// rather than return a success that created nothing.
+	_, err := d.EnsureRunning(ctx, spec(id))
+	if err == nil {
+		t.Fatal("EnsureRunning reported success against a terminating pod; the machine would never appear")
+	}
+	if !strings.Contains(err.Error(), "terminating") {
+		t.Errorf("error = %v, want one that names the terminating object", err)
+	}
+}
+
 // The readiness probe must not be an httpGet. The kubelet performs those from
 // the node's address, so the machine's NetworkPolicy — whose whole job is to
 // permit exactly one ingress peer on the guest ports — would have to permit a

@@ -105,6 +105,11 @@ const (
 // server); the margin covers code-server and PTY children.
 const stopGracePeriod int64 = 15
 
+// defaultDeleteWait bounds the wait for a deleted pod or PVC to actually
+// disappear. Comfortably more than the pod's own termination grace period, since
+// the volume's finalizer only clears once the pod that mounts it is gone.
+const defaultDeleteWait = 90 * time.Second
+
 // defaultDiskMiB is the PVC size used when a machine arrives with no disk in its
 // spec. A pod's rootfs is ephemeral, so the machine still needs somewhere for
 // $HOME and the workspace to survive a stop.
@@ -170,6 +175,14 @@ type Config struct {
 	// CapacityTTL is how long a Capacity() answer is cached; the node list it
 	// derives from changes on a much slower cadence than the poller asks.
 	CapacityTTL time.Duration
+
+	// DeleteWaitTimeout bounds how long EnsureRunning waits for a previous
+	// incarnation of a machine's pod or volume to finish deleting before it
+	// gives up. Zero ⇒ defaultDeleteWait. Deletion is asynchronous in
+	// Kubernetes — a pod stays visible for its whole termination grace period
+	// and a PVC is pinned by the pvc-protection finalizer while a pod still
+	// mounts it — so "create the replacement" has to mean "wait, then create".
+	DeleteWaitTimeout time.Duration
 }
 
 // Driver runs machines as pods. It holds no per-machine state: every method is
@@ -298,12 +311,31 @@ func (d *Driver) ensurePod(ctx context.Context, spec driver.VMSpec, image string
 
 	existing, err := pods.Get(ctx, name, metav1.GetOptions{})
 	switch {
+	case err == nil && terminating(existing.ObjectMeta):
+		// The previous incarnation is still shutting down. Adopting it would
+		// report the machine as already running and create nothing, so the pod
+		// finishes dying and the machine silently never exists — which is
+		// exactly what a start issued straight after a stop does.
+		slog.Info("kubernetes: waiting for the previous pod to finish terminating",
+			"machine", spec.MachineID, "pod", name)
+		if err := d.waitGone(ctx, "pod "+name, func(ctx context.Context) (bool, error) {
+			return d.podPresent(ctx, name)
+		}); err != nil {
+			return err
+		}
 	case err == nil && !terminal(existing.Status.Phase):
 		return nil
 	case err == nil:
 		slog.Info("kubernetes: recreating pod in a terminal phase",
 			"machine", spec.MachineID, "pod", name, "phase", existing.Status.Phase)
 		if err := d.deletePod(ctx, name); err != nil {
+			return err
+		}
+		// Even a terminal pod is removed asynchronously, and Create would fail
+		// with AlreadyExists against the name it still holds.
+		if err := d.waitGone(ctx, "pod "+name, func(ctx context.Context) (bool, error) {
+			return d.podPresent(ctx, name)
+		}); err != nil {
 			return err
 		}
 	case !apierrors.IsNotFound(err):
@@ -332,6 +364,68 @@ func terminal(p corev1.PodPhase) bool {
 // deletePod removes a pod and waits for nothing — callers that need the name
 // free again (the recreate path) delete with a zero grace period so the API
 // server does not hand back a terminating object on the next Create.
+// waitGone blocks until present reports false. Kubernetes deletions are
+// asynchronous: the object stays visible, with a DeletionTimestamp, until its
+// containers have stopped and its finalizers have cleared. Creating the
+// replacement before then fails with AlreadyExists — or, worse, succeeds against
+// the dying object and does nothing at all.
+//
+// None of this is reachable against a fake clientset, which deletes instantly
+// and honours no finalizers. It took a real cluster, and a create issued
+// immediately after a destroy of the same machine, to show it.
+func (d *Driver) waitGone(ctx context.Context, what string, present func(context.Context) (bool, error)) error {
+	timeout := d.cfg.DeleteWaitTimeout
+	if timeout <= 0 {
+		timeout = defaultDeleteWait
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		still, err := present(ctx)
+		if err != nil {
+			return err
+		}
+		if !still {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%s is still terminating after %s; the machine cannot be recreated yet", what, timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+// pvcPresent reports whether the named claim still exists at all, terminating or
+// not. Distinct from pvcExists, which asks whether a machine still HAS a volume
+// (a terminating one does not count) — here the question is whether the name is
+// still taken.
+func (d *Driver) pvcPresent(ctx context.Context, name string) (bool, error) {
+	_, err := d.client.CoreV1().PersistentVolumeClaims(d.cfg.Namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get pvc %s: %w", name, err)
+	}
+	return true, nil
+}
+
+// podPresent reports whether the named pod still exists at all, terminating or
+// not — the question waitGone asks.
+func (d *Driver) podPresent(ctx context.Context, name string) (bool, error) {
+	_, err := d.client.CoreV1().Pods(d.cfg.Namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get pod %s: %w", name, err)
+	}
+	return true, nil
+}
+
 func (d *Driver) deletePod(ctx context.Context, name string) error {
 	zero := int64(0)
 	err := d.client.CoreV1().Pods(d.cfg.Namespace).Delete(ctx, name, metav1.DeleteOptions{

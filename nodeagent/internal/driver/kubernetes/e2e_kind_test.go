@@ -501,6 +501,15 @@ func TestKindSSH(t *testing.T) {
 	a.ensure(t, id)
 	a.waitState(t, id, api.StateRunning, bootTimeout)
 
+	// Wait for sshd again before asking it anything. `running` means the GUEST
+	// container is ready, deliberately — a broken sshd must not cost a user
+	// their terminal — so a terminal opens while sshd may still be starting.
+	// Before this wait the fingerprint read raced it and ssh-keyscan returned
+	// nothing, which reached ssh-keygen as "(stdin) is not a public key file"
+	// and failed the run on main. The first fingerprint never raced because a
+	// successful key login had already proved sshd was up.
+	waitForSSHBanner(t, a, id, 90*time.Second)
+
 	ws2, tunnel2 := a.terminal(t, id, "ssh-after-restart")
 	defer tunnel2.Close()
 	defer ws2.Close()
@@ -557,8 +566,8 @@ const hostKeyFingerprintCmd = `ssh-keyscan -t ed25519 127.0.0.1 2>/dev/null | ss
 
 // fingerprint pulls the tagged fingerprint out of a PTY buffer. It insists on a
 // SHA256: value and fails the test otherwise, so no other line — an echo, a
-// prompt, an error — can be mistaken for one and make the before/after
-// comparison trivially true.
+// prompt, an error, or ssh-keygen complaining that its input was empty — can be
+// mistaken for one and make the before/after comparison trivially true.
 func fingerprint(t *testing.T, out string) string {
 	t.Helper()
 	for _, line := range strings.Split(out, "\n") {
