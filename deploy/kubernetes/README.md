@@ -111,7 +111,13 @@ in the sections that follow.
 ```sh
 # 1. The sandbox, on every node machine pods may run on. Machines are NOT safe
 #    without it, and the agent refuses to start when the RuntimeClass is absent.
+#    Run it on the node itself; it installs runsc, registers the runtime with
+#    k3s's containerd, and proves a pod on THAT node really gets a gVisor kernel.
 sudo deploy/kubernetes/gvisor-k3s.sh
+#    Then label the node, from wherever you run kubectl. The RuntimeClass carries
+#    a matching nodeSelector, so an unlabelled node is simply never given a
+#    machine — which is what you want while a rollout is only half done.
+kubectl label node <node> proteos.io/sandbox=gvisor
 
 # 2. The agent's identity: the token the control plane presents, and the TLS
 #    cert it pins. The SAN must match the address the control plane will dial —
@@ -140,7 +146,21 @@ Then verify the two assumptions the security model rests on, because neither
 fails loudly: `deploy/kubernetes/gvisor-k3s.sh --check` for the sandbox, and the
 NetworkPolicy probe below for the CNI. k3s enforces NetworkPolicy by default
 (flannel plus kube-router's policy controller) unless it was started with
-`--disable-network-policy`.
+`--disable-network-policy` — verified on a v1.36 cluster, where an unrelated pod
+was refused a machine's terminal port and reached it the moment the policy was
+removed. Run the probe both ways like that: a connection that fails for an
+unrelated reason looks exactly like a policy that works.
+
+**The address in the certificate.** The agent terminates TLS and the control
+plane pins its certificate, so the SAN has to match whatever the control plane
+dials. With klipper (stock k3s) that is a node's own address, and a machine
+rebuild changes which node answers; with MetalLB or a cloud provider it is the
+LoadBalancer's stable VIP, which is the better thing to put in a certificate.
+Check what you actually got before issuing it:
+
+```sh
+kubectl -n proteos-system get svc proteos-cluster-agent   # EXTERNAL-IP
+```
 
 **What k3s gives you and what it does not.** `local-path` is a working RWO
 StorageClass, but it is node-local — a machine's pod is pinned to the node
