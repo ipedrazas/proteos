@@ -112,6 +112,17 @@ func run() error {
 	if h := p.Home(); h != "" {
 		homeDir = h
 	}
+	// One home for everything that writes into the session user's home. The
+	// terminal already started sessions in homeDir; the secrets store (which
+	// lands profile files and .ssh/authorized_keys) went on using the OS user's
+	// home, so in dir mode the injector wrote to the image's /home/<user> — a
+	// directory that dies with the container and that no session's $HOME even
+	// points at. A pushed profile file was invisible to the user who asked for
+	// it, and an injected authorized_keys would be invisible to sshd (K4).
+	// Disk mode is unaffected: there the persisted home IS id.Home (bind-mounted
+	// over it), so this override resolves to the same path.
+	owner := id
+	owner.Home = homeDir
 	sessDir := ""
 	if !id.IsRoot {
 		sessDir = homeDir
@@ -125,7 +136,7 @@ func run() error {
 	})
 	defer mgr.Shutdown()
 
-	sec, err := secrets.New(cfg.EnvDir, id)
+	sec, err := secrets.New(cfg.EnvDir, owner)
 	if err != nil {
 		return err
 	}

@@ -26,7 +26,8 @@
 # WHAT IS DELIBERATELY ABSENT vs the ext4 image:
 #   * systemd — the guest-agent is PID 1 (it already handles SIGTERM with a 5s
 #     grace period). sshd therefore has no supervisor here; the Kubernetes
-#     backend runs it as a second container in the pod instead (K4).
+#     backend runs it as a second container in the pod instead, from THIS image
+#     with /usr/local/bin/proteos-sshd as its command (K4).
 #   * NOPASSWD sudo for the `dev` user. On Firecracker the microVM boundary makes
 #     in-guest root uninteresting; a pod shares the host kernel, so the sudoers
 #     drop-in is not carried over. sudo is not installed at all.
@@ -103,18 +104,37 @@ FROM ${BASE_IMAGE} AS platform
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 
+# openssh-server is here for the pod's sshd sidecar (K4). Its postinst generates
+# host keys AT BUILD TIME; baked into the image they would be identical on every
+# machine started from it, so any machine could impersonate any other to a client
+# that pinned the fingerprint. They are deleted in the same layer that creates
+# them — proteos-sshd generates a per-machine set on the machine's own volume at
+# first start.
 RUN apt-get update -qq \
     && apt-get install -y --no-install-recommends \
-       ca-certificates curl git vim less unzip xz-utils procps tini locales openssh-client \
-    && rm -rf /var/lib/apt/lists/*
+       ca-certificates curl git vim less unzip xz-utils procps tini locales \
+       openssh-client openssh-server \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/ssh/ssh_host_*
 
 # The `dev` user PTY sessions drop to (Phase 8). The guest-agent resolves it by
 # NAME, so the uid is free — but pin it to 1000 anyway so files on the PVC keep
 # stable ownership across image rebuilds. ubuntu:24.04 ships its own uid-1000
 # `ubuntu` user; remove it first. No sudoers drop-in (see the header).
+#
+# Its home is the PERSISTED home, not the image's /home/dev. Three things
+# resolve "~" for this user and they have to mean the same directory: the guest
+# agent starts sessions in the persisted home (dir mode puts it at
+# <persist>/home), the injector writes profile files and .ssh/authorized_keys
+# there, and sshd reads $HOME and AuthorizedKeysFile from THIS passwd field.
+# Leave it at /home/dev and an ssh session lands in a directory that dies with
+# the container, holding none of the user's files and none of their keys. The
+# ext4 image gets the same alignment by bind-mounting the persisted home over
+# /home/dev — a mount namespace this backend does not have.
 RUN userdel -r ubuntu 2>/dev/null || true; \
     groupadd -g 1000 dev \
-    && useradd -m -u 1000 -g 1000 -s /bin/bash dev
+    && useradd -m -u 1000 -g 1000 -s /bin/bash dev \
+    && usermod -d /persist/home dev
 
 # Node + npm at /usr/local (the runtime for the npm-distributed provider CLIs).
 COPY --from=artifacts /opt/proteos/dl/node.tar.xz /tmp/node.tar.xz
@@ -148,6 +168,23 @@ RUN chmod 0755 /usr/local/bin/claude
 COPY image/claude-managed-settings.json /etc/claude-code/managed-settings.json
 COPY image/profile.d-proteos-providers.sh /etc/profile.d/proteos-providers.sh
 RUN chmod 0644 /etc/claude-code/managed-settings.json /etc/profile.d/proteos-providers.sh
+
+# sshd's config and its sidecar entrypoint. sshd is NOT started here: it runs as
+# a second container in the machine pod, sharing this image and the pod's
+# network namespace, so the guest agent's ssh forward reaches it on 127.0.0.1:22
+# exactly as it does inside a microVM (K4).
+#
+# The sed is not cosmetic: pam_loginuid ties a session to an audit login id by
+# writing /proc/self/loginuid, which needs CAP_AUDIT_CONTROL and an audit
+# subsystem the container is not part of. Left `required`, every ssh session
+# fails at the session stage — "Cannot make/remove an entry for the specified
+# session" — however well authentication went. Optional keeps the module's
+# bookkeeping without letting its absence deny a login.
+COPY image/sshd_config.k8s /etc/ssh/sshd_config
+COPY image/proteos-sshd.sh /usr/local/bin/proteos-sshd
+RUN chmod 0644 /etc/ssh/sshd_config \
+    && chmod 0755 /usr/local/bin/proteos-sshd \
+    && sed -i 's/^\(session\s*\)required\(\s*pam_loginuid\.so\)/\1optional\2/' /etc/pam.d/sshd
 
 # The guest agent. The path matters: it is also the credential helper git
 # invokes (Phase 7 decision #5 — the same static binary, dispatched by argv[1]),
@@ -219,16 +256,18 @@ RUN { echo "PROTEOS_ROOTFS_BASE=oci-ubuntu-24.04"; \
     && rm /tmp/artifacts.env && chmod 0644 /etc/proteos-release
 
 # The listener set the Kubernetes driver dials on the pod IP: terminal 1024,
-# code-server 1025, port-preview 1026 (agentapi's Guest*Port). SSH (1027) is
-# left unset — sshd is a separate container in the pod (K4).
+# code-server 1025, port-preview 1026, inbound ssh 1027 (agentapi's Guest*Port).
+# The ssh forward's backend is 127.0.0.1:22 — the sshd sidecar, reachable
+# because pod containers share a network namespace.
 ENV PROTEOS_GUEST_LISTEN=tcp:0.0.0.0:1024 \
     PROTEOS_GUEST_WEB_LISTEN=tcp:0.0.0.0:1025 \
     PROTEOS_GUEST_PREVIEW_LISTEN=tcp:0.0.0.0:1026 \
+    PROTEOS_GUEST_SSH_LISTEN=tcp:0.0.0.0:1027 \
     PROTEOS_GUEST_PERSIST=/persist \
     PROTEOS_GUEST_ENV_DIR=/run/proteos/env \
     PROTEOS_GUEST_RUN_AS_USER=dev \
     PROTEOS_CODESERVER_BIN=/usr/local/bin/code-server
-EXPOSE 1024 1025 1026
+EXPOSE 1024 1025 1026 1027
 
 # The guest-agent is PID 1 but spawns PTYs and code-server, so it needs a reaper
 # for orphaned grandchildren; tini is that (systemd's only remaining job here).

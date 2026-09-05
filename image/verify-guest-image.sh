@@ -89,11 +89,15 @@ trap cleanup EXIT
 # tmpfs env dir and the persist tree to the session user and spawns PTYs as that
 # user. Dropping DAC_OVERRIDE/CHOWN as well makes persistence silently degrade to
 # ephemeral, which is exactly the kind of drift this script exists to catch.
+#
+# SYS_CHROOT belongs to the sshd sidecar, not the guest container (sshd
+# privilege-separates by chrooting its unprivileged listener). This one container
+# plays both roles, so it gets the union — the pod keeps them apart.
 log "starting $IMAGE"
 CID="$(docker run -d --rm \
   --cap-drop ALL \
   --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE \
-  --cap-add SETUID --cap-add SETGID \
+  --cap-add SETUID --cap-add SETGID --cap-add SYS_CHROOT \
   --security-opt no-new-privileges \
   --tmpfs /run/proteos:rw,mode=0700 \
   -v "$VOLUME:/persist" \
@@ -208,7 +212,48 @@ print("preview forward reached 127.0.0.1:8080")
 PY
 ok "port-preview forward bridges to an in-container loopback port"
 
-# --- 5. the baked platform layer --------------------------------------------
+# --- 5. sshd, the way the pod runs it ---------------------------------------
+# In a machine pod sshd is a SECOND CONTAINER from this same image, sharing the
+# pod's network namespace. There is no pod here, so the equivalent is to run the
+# same entrypoint inside this container: same image, same loopback, same volume.
+# What is actually under test is the configuration — that the host keys land on
+# the persist volume rather than in the image, and that sshd and the guest agent
+# agree on which directory is the session user's home. They disagree easily: sshd
+# reads $HOME and AuthorizedKeysFile from the passwd entry, while the guest agent
+# uses the persisted home, and a mismatch means ssh authenticates against a file
+# nothing ever writes.
+log "starting sshd the way the pod's sidecar does"
+docker exec -d "$CID" /usr/local/bin/proteos-sshd || die "could not start proteos-sshd"
+# bash, not sh: /dev/tcp is a bash feature and the image's /bin/sh is dash, where
+# this probe fails no matter what sshd is doing.
+for i in $(seq 1 30); do
+  docker exec "$CID" bash -lc 'exec 3<>/dev/tcp/127.0.0.1/22' >/dev/null 2>&1 && break
+  sleep 1
+  [[ $i -eq 30 ]] && { docker logs "$CID" 2>&1 | tail -20; die "sshd never listened on 127.0.0.1:22"; }
+done
+ok "sshd listening on 127.0.0.1:22"
+
+docker exec "$CID" sh -lc 'test -s /persist/ssh_host_keys/ssh_host_ed25519_key'   || die "host keys are not on the persist volume; a machine would change identity on every restart"
+docker exec "$CID" sh -lc 'test -z "$(ls -A /etc/ssh/ssh_host_* 2>/dev/null)"'   || die "the IMAGE ships host keys; every machine built from it would share one identity"
+ok "host keys are per-machine, on the persist volume"
+
+HOME_PASSWD="$(docker exec "$CID" sh -lc 'getent passwd dev | cut -d: -f6')"
+[[ $HOME_PASSWD == /persist/* ]]   || die "dev's passwd home is $HOME_PASSWD, not on the persist volume — ssh sessions would land in an ephemeral home"
+ok "dev's home is the persisted one ($HOME_PASSWD)"
+
+log "logging in over ssh with a key where the injector puts it"
+docker exec "$CID" sh -lc '
+  set -e
+  ssh-keygen -q -t ed25519 -f /tmp/verify_key -N ""
+  install -d -m 700 -o dev -g dev "'"$HOME_PASSWD"'/.ssh"
+  install -m 600 -o dev -g dev /tmp/verify_key.pub "'"$HOME_PASSWD"'/.ssh/authorized_keys"
+' || die "could not install a test authorized_keys"
+SSH_OUT="$(docker exec "$CID" sh -lc   'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes        -i /tmp/verify_key dev@127.0.0.1 "id -un; pwd" 2>&1')"   || die "ssh login failed: $SSH_OUT"
+echo "$SSH_OUT" | grep -q '^dev$' || die "ssh session is not the dev user: $SSH_OUT"
+echo "$SSH_OUT" | grep -q "^$HOME_PASSWD\$" || die "ssh session did not start in the persisted home: $SSH_OUT"
+ok "ssh key auth works and lands in the persisted home"
+
+# --- 6. the baked platform layer --------------------------------------------
 log "checking the platform layer"
 check() { # check DESCRIPTION COMMAND...
   local desc="$1"; shift
@@ -225,7 +270,7 @@ check "gh wrapper"   "test -x /usr/local/bin/gh && test -x /usr/local/libexec/pr
 check "providers snippet" "test -r /etc/profile.d/proteos-providers.sh && echo present"
 check "no sudo"      "! command -v sudo >/dev/null && echo 'sudo absent (pod boundary is thinner than a microVM)'"
 
-# --- 6. provenance ----------------------------------------------------------
+# --- 7. provenance ----------------------------------------------------------
 REL="$(docker exec "$CID" cat /etc/proteos-release)" || die "no /etc/proteos-release"
 echo "$REL" | grep -q '^PROTEOS_BACKEND=kubernetes' || die "release stamp missing PROTEOS_BACKEND"
 echo "$REL" | grep -q '^PROTEOS_CLAUDE_SHA256=[0-9a-f]\{64\}$' || die "release stamp missing a pinned Claude digest"

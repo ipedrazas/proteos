@@ -854,6 +854,53 @@ one.
 
 ---
 
+## Part K — Kubernetes backend (cluster-agent ops)
+
+A cluster of machines-as-pods joins the fleet as one more host. Setup lives in
+[deploy/kubernetes/README.md](deploy/kubernetes/README.md) (quickstart, the
+sandbox, the pull secrets, registering the host); this is what to do when it
+misbehaves.
+
+**The five things that are different, and the questions they cause.**
+
+| Symptom | Where to look |
+| --- | --- |
+| "Why can't I hibernate?" | You can't, on this backend. A pod has no RAM to snapshot, so the control plane sends a poweroff and the machine goes through `stopping`, not `hibernating`, then cold-boots. The volume is kept. The console names the backend on a machine's Overview and hides the snapshot field |
+| `503 no_capacity` on create | Either no host runs a backend this template can boot — a cluster host needs a template with `image_ref` — or the cluster genuinely has no room. The control plane logs which drivers the template supports; `kubectl -n proteos-machines get pods` shows whether earlier machines are Pending |
+| Machine stuck in `creating` | The pod is Pending or not Ready. `kubectl -n proteos-machines describe pod m-<id8>` — the kubelet's own reason (`Insufficient cpu`, `ImagePullBackOff`, `FailedScheduling` on the RuntimeClass) is also copied into the machine's `reason` in `GET /v1/machines/{id}` |
+| Machine reports `error` immediately after starting | A crash-looping container. `kubectl -n proteos-machines logs m-<id8> -c guest` (or `-c sshd`); the driver checks CrashLoopBackOff explicitly, so a broken machine says so instead of sitting in `creating` forever |
+| Terminal works, SSH does not | The sshd sidecar. `kubectl -n proteos-machines logs m-<id8> -c sshd`. Its most likely failure is a home mismatch: sshd reads `~/.ssh/authorized_keys` from the passwd home, which the guest image points at the persisted home — `kubectl exec … -c sshd -- getent passwd dev` must show a path under `/persist` |
+
+**NetworkPolicy troubleshooting.** Machine ingress is restricted to the
+cluster-agent pod, so the first question is always whether the policy is being
+enforced at all — an unenforced policy fails open and nothing reports it:
+
+```bash
+kubectl -n proteos-machines get networkpolicy                 # one per machine, plus default-deny
+kubectl -n proteos-machines describe networkpolicy m-<id8>    # is the agent named as the peer?
+# From an unrelated pod, this must TIME OUT. A 200 means the CNI is not enforcing.
+kubectl -n proteos-machines run probe --rm -i --image=curlimages/curl --restart=Never --   sh -c 'curl -m 3 -s http://<machine-pod-ip>:1024/healthz; echo "exit=$?"'
+```
+
+If machines are unreachable from the cluster-agent instead, the usual cause is
+the reverse: `PROTEOS_K8S_AGENT_POD_LABELS` no longer matches the agent
+Deployment's pod labels, so the policy names a peer that does not exist. The
+agent warns about this at startup when the setting is empty, and writes NO
+ingress rule rather than an open one — an unreachable machine is a visible
+failure; an over-permissive policy is not.
+
+**Sandbox.** `deploy/kubernetes/gvisor-k3s.sh --check` on a node answers whether
+runsc is installed and registered. Machines Pending with
+`FailedScheduling: … node(s) didn't match RuntimeClass` mean the class exists but
+the handler does not on that node.
+
+**Agent restarts are free.** The API server holds all the state: the
+cluster-agent keeps nothing on disk and finds the fleet again by label, so
+`kubectl -n proteos-system rollout restart deploy/proteos-cluster-agent` does not
+disturb a single running machine.
+
+---
+
 ## Reproducibility notes
 
 - **Pinned versions** live in `spike/firecracker/env.sh` + the committed

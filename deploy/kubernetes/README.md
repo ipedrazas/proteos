@@ -24,6 +24,8 @@ control plane ──TLS+bearer──▶ cluster-agent (Deployment, proteos-syste
 | `base/networkpolicy.yaml` | Default-deny for `proteos-machines`; the agent's own policy |
 | `base/runtimeclass-gvisor.yaml` | Example RuntimeClass (**not** applied by default — see below) |
 | `overlays/kind/` | The e2e shape: no RuntimeClass, locally-loaded images. Used by `e2e-kind.sh`, not for production |
+| `overlays/k3s/` | A self-hosted k3s cluster: LoadBalancer Service, local-path storage, k3s's CIDRs, the gvisor RuntimeClass |
+| `gvisor-k3s.sh` | Installs runsc on a k3s node and proves a pod really runs sandboxed |
 
 ```sh
 kubectl apply -k deploy/kubernetes/base/
@@ -101,6 +103,72 @@ link-local (cloud metadata) and loopback, but the pod and service CIDRs are
 cluster-specific. Set them, or a machine can reach cluster services on a
 non-RFC1918 range.
 
+## Quickstart: a self-hosted k3s cluster
+
+The five steps, in the order they have to happen. Everything here is explained
+in the sections that follow.
+
+```sh
+# 1. The sandbox, on every node machine pods may run on. Machines are NOT safe
+#    without it, and the agent refuses to start when the RuntimeClass is absent.
+#    Run it on the node itself; it installs runsc, registers the runtime with
+#    k3s's containerd, and proves a pod on THAT node really gets a gVisor kernel.
+sudo deploy/kubernetes/gvisor-k3s.sh
+#    Then label the node, from wherever you run kubectl. The RuntimeClass carries
+#    a matching nodeSelector, so an unlabelled node is simply never given a
+#    machine — which is what you want while a rollout is only half done.
+kubectl label node <node> proteos.io/sandbox=gvisor
+
+# 2. The agent's identity: the token the control plane presents, and the TLS
+#    cert it pins. The SAN must match the address the control plane will dial —
+#    the node IP, or a name pointing at it.
+openssl req -x509 -newkey rsa:4096 -nodes -days 825   -subj "/CN=proteos-cluster-agent" -addext "subjectAltName=IP:<NODE_IP>"   -keyout agent.key -out agent.crt
+kubectl create namespace proteos-system --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n proteos-system create secret generic proteos-cluster-agent   --from-literal=PROTEOS_AGENT_TOKEN="$(openssl rand -hex 32)"   --from-file=tls.crt=agent.crt --from-file=tls.key=agent.key
+
+# 3. Pulling the images. ProteOS's GHCR packages are private, so both the
+#    cluster-agent and every machine pod need a pull secret.
+kubectl -n proteos-system create secret docker-registry ghcr   --docker-server=ghcr.io --docker-username=<github-user> --docker-password=<PAT with read:packages>
+kubectl create namespace proteos-machines --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n proteos-machines create secret docker-registry ghcr   --docker-server=ghcr.io --docker-username=<github-user> --docker-password=<PAT with read:packages>
+# The k3s overlay already references both by the name `ghcr`.
+
+# 4. The cluster-agent.
+kubectl apply -k deploy/kubernetes/overlays/k3s/
+kubectl -n proteos-system rollout status deploy/proteos-cluster-agent
+kubectl -n proteos-system get svc proteos-cluster-agent   # note EXTERNAL-IP:9090
+
+# 5. Register it with the control plane (see "Registering the host"), and give
+#    it a template it can boot ("Giving it something to boot").
+```
+
+Then verify the two assumptions the security model rests on, because neither
+fails loudly: `deploy/kubernetes/gvisor-k3s.sh --check` for the sandbox, and the
+NetworkPolicy probe below for the CNI. k3s enforces NetworkPolicy by default
+(flannel plus kube-router's policy controller) unless it was started with
+`--disable-network-policy` — verified on a v1.36 cluster, where an unrelated pod
+was refused a machine's terminal port and reached it the moment the policy was
+removed. Run the probe both ways like that: a connection that fails for an
+unrelated reason looks exactly like a policy that works.
+
+**The address in the certificate.** The agent terminates TLS and the control
+plane pins its certificate, so the SAN has to match whatever the control plane
+dials. With klipper (stock k3s) that is a node's own address, and a machine
+rebuild changes which node answers; with MetalLB or a cloud provider it is the
+LoadBalancer's stable VIP, which is the better thing to put in a certificate.
+Check what you actually got before issuing it:
+
+```sh
+kubectl -n proteos-system get svc proteos-cluster-agent   # EXTERNAL-IP
+```
+
+**What k3s gives you and what it does not.** `local-path` is a working RWO
+StorageClass, but it is node-local — a machine's pod is pinned to the node
+holding its volume — and it is **not encrypted**. This backend has no
+per-machine LUKS key, so encryption at rest is the StorageClass's job: encrypt
+the disk under the node (LUKS on the VM's virtual disk, or a full-disk-encrypted
+host) or use a storage layer that does it for you.
+
 ## Registering the host
 
 Reachability from a control plane outside the cluster is your choice — an
@@ -147,4 +215,4 @@ and the fleet disagree.
 | Hibernate | RAM snapshot, resume | poweroff; the volume is kept, the machine boots cold. Stop moves the machine through `stopping`, not `hibernating`, and the console hides the snapshot field |
 | Encryption at rest | per-machine LUKS key | StorageClass |
 | Egress policy | nftables on the tap | NetworkPolicy, IP snapshot (no live FQDN) |
-| Inbound SSH | sshd under systemd | not yet — K4 adds an sshd sidecar |
+| Inbound SSH | sshd under systemd | sshd as a sidecar container in the machine pod, on the pod's loopback |

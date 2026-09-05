@@ -1,0 +1,28 @@
+# The gvisor RuntimeClass, for real this time.
+#
+# base/runtimeclass-gvisor.yaml is the same object as an EXAMPLE (the base
+# kustomization deliberately does not apply it, because a managed cluster may
+# create it for you — GKE Sandbox does). k3s creates nothing, so this overlay
+# applies it: the base Deployment sets PROTEOS_K8S_RUNTIME_CLASS=gvisor and the
+# agent refuses to start when that class does not exist.
+#
+# This object only NAMES a handler. Installing runsc and registering the handler
+# in k3s's containerd config is a step on the node itself — see
+# deploy/kubernetes/gvisor-k3s.sh and the README.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc
+# Machine pods may only be scheduled where runsc actually exists. Without this a
+# machine lands on whichever node the scheduler likes; on a node that has not had
+# gvisor-k3s.sh run on it the pod fails to start, and the user sees a broken
+# machine rather than an un-rolled-out cluster. A cluster is mixed for the whole
+# of any rollout, and permanently if machines are meant to run on a subset of
+# nodes, so this is not a transitional concern.
+#
+# Label the nodes that have the runtime:
+#     kubectl label node <node> proteos.io/sandbox=gvisor
+scheduling:
+  nodeSelector:
+    proteos.io/sandbox: gvisor

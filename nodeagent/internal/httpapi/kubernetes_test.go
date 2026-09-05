@@ -195,7 +195,10 @@ func TestKubernetesCapacityOverTheWire(t *testing.T) {
 	if cap.TotalVcpus != 8 || cap.TotalMemMiB != 16384 {
 		t.Errorf("cluster total = %d vcpus / %d MiB, want 8 / 16384", cap.TotalVcpus, cap.TotalMemMiB)
 	}
+	// The shape the machine was created with. Its pod requests differ (the sshd
+	// sidecar has its own slice, and CPU requests carry the oversubscription
+	// ratio), which is exactly why Used is not derived from them.
 	if cap.UsedVcpus != 2 || cap.UsedMemMiB != 2048 {
-		t.Errorf("used = %d vcpus / %d MiB, want the one machine's 2 / 2048", cap.UsedVcpus, cap.UsedMemMiB)
+		t.Errorf("used = %d vcpus / %d MiB, want the one machine's declared 2 / 2048", cap.UsedVcpus, cap.UsedMemMiB)
 	}
 }

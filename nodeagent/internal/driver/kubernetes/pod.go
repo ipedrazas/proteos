@@ -99,15 +99,14 @@ func (d *Driver) ensurePVC(ctx context.Context, spec driver.VMSpec) error {
 	return nil
 }
 
-// buildPod is the machine pod spec.
+// buildPod is the machine pod spec: the guest agent, and sshd beside it.
 //
 // Security context (K-plan decision 6): the guest keeps its root-agent /
-// non-root-`dev` split, so the container runs as root — but as root INSIDE a
+// non-root-`dev` split, so the containers run as root — but as root INSIDE a
 // sandboxed runtime, with privilege escalation off, the default seccomp profile
-// on, and only the five capabilities the guest-agent actually uses (it chowns
-// the tmpfs env dir and the persist tree to the session user, and spawns PTYs as
-// that user). The sandbox, not the capability set, is what makes this safe;
-// RuntimeClass is a precondition of the backend, not a hardening option.
+// on, and only the capabilities each one actually uses. The sandbox, not the
+// capability set, is what makes this safe; RuntimeClass is a precondition of the
+// backend, not a hardening option.
 func (d *Driver) buildPod(spec driver.VMSpec, image string) *corev1.Pod {
 	name := resourceName(spec.MachineID)
 	meta := d.objectMeta(name, spec)
@@ -143,61 +142,13 @@ func (d *Driver) buildPod(spec driver.VMSpec, image string) *corev1.Pod {
 			TerminationGracePeriodSeconds: &grace,
 			AutomountServiceAccountToken:  ptr(false), // a machine is not a cluster client
 			EnableServiceLinks:            ptr(false), // do not leak service env vars into the guest
+			DNSConfig:                     machineDNSConfig(),
 			NodeSelector:                  d.cfg.NodeSelector,
 			Volumes:                       volumes,
-			Containers: []corev1.Container{{
-				Name:            guestContainer,
-				Image:           image,
-				ImagePullPolicy: corev1.PullIfNotPresent,
-				Ports: []corev1.ContainerPort{
-					{Name: "terminal", ContainerPort: int32(api.GuestTerminalPort)},
-					{Name: "web", ContainerPort: int32(api.GuestWebPort)},
-					{Name: "preview", ContainerPort: int32(api.GuestPreviewPort)},
-				},
-				Env: guestEnv(),
-				VolumeMounts: []corev1.VolumeMount{
-					{Name: persistVolume, MountPath: persistMountPath},
-					{Name: runVolume, MountPath: runMountPath},
-				},
-				Resources: d.resourceRequirements(spec),
-				// Readiness gates DialGuest: the driver refuses to tunnel to a
-				// pod whose guest-agent is not answering /healthz yet, which is
-				// what keeps a "running" machine actually attachable.
-				//
-				// EXEC, not httpGet, and deliberately so. An httpGet probe is
-				// performed by the kubelet from the NODE's address, which means
-				// the machine's NetworkPolicy would have to permit a second
-				// ingress peer on the very guest ports it exists to restrict to
-				// exactly one — and the node's address is not something a
-				// portable policy can name. Whether kubelet probe traffic is
-				// even subject to policy differs between CNIs, so an httpGet
-				// probe makes readiness a property of the CNI rather than of the
-				// guest. An exec probe runs through the CRI rather than the
-				// network: unaffected by policy, identical on every CNI, and it
-				// keeps the guest's network surface exactly "the cluster-agent,
-				// and nothing else".
-				ReadinessProbe: &corev1.Probe{
-					ProbeHandler: corev1.ProbeHandler{
-						Exec: &corev1.ExecAction{Command: healthzProbeCommand()},
-					},
-					InitialDelaySeconds: 1,
-					PeriodSeconds:       3,
-					TimeoutSeconds:      3,
-					FailureThreshold:    30,
-				},
-				SecurityContext: &corev1.SecurityContext{
-					AllowPrivilegeEscalation: ptr(false),
-					Privileged:               ptr(false),
-					ReadOnlyRootFilesystem:   ptr(false), // the guest is a dev box; it writes everywhere
-					Capabilities: &corev1.Capabilities{
-						Drop: []corev1.Capability{"ALL"},
-						Add: []corev1.Capability{
-							"CHOWN", "FOWNER", "DAC_OVERRIDE", "SETUID", "SETGID",
-						},
-					},
-					SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-				},
-			}},
+			Containers: []corev1.Container{
+				guestContainerSpec(image, d.resourceRequirements(spec)),
+				sshdContainerSpec(image),
+			},
 		},
 	}
 
@@ -211,6 +162,168 @@ func (d *Driver) buildPod(spec driver.VMSpec, image string) *corev1.Pod {
 	return pod
 }
 
+// guestContainerSpec is the machine itself: the guest agent as PID 1, listening
+// on the four guest ports the node-agent tunnel dials on the pod IP.
+func guestContainerSpec(image string, resources corev1.ResourceRequirements) corev1.Container {
+	return corev1.Container{
+		Name:            guestContainer,
+		Image:           image,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Ports: []corev1.ContainerPort{
+			{Name: "terminal", ContainerPort: int32(api.GuestTerminalPort)},
+			{Name: "web", ContainerPort: int32(api.GuestWebPort)},
+			{Name: "preview", ContainerPort: int32(api.GuestPreviewPort)},
+			// The guest agent's ssh forward, not sshd itself: sshd listens on
+			// loopback inside this pod and the forward is the only way in.
+			{Name: "ssh", ContainerPort: int32(api.GuestSSHPort)},
+		},
+		Env: guestEnv(),
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: persistVolume, MountPath: persistMountPath},
+			{Name: runVolume, MountPath: runMountPath},
+		},
+		Resources: resources,
+		// Readiness gates DialGuest: the driver refuses to tunnel to a pod
+		// whose guest-agent is not answering /healthz yet, which is what keeps
+		// a "running" machine actually attachable.
+		//
+		// EXEC, not httpGet, and deliberately so. An httpGet probe is performed
+		// by the kubelet from the NODE's address, which means the machine's
+		// NetworkPolicy would have to permit a second ingress peer on the very
+		// guest ports it exists to restrict to exactly one — and the node's
+		// address is not something a portable policy can name. Whether kubelet
+		// probe traffic is even subject to policy differs between CNIs, so an
+		// httpGet probe makes readiness a property of the CNI rather than of
+		// the guest. An exec probe runs through the CRI rather than the
+		// network: unaffected by policy, identical on every CNI, and it keeps
+		// the guest's network surface exactly "the cluster-agent, and nothing
+		// else".
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				Exec: &corev1.ExecAction{Command: healthzProbeCommand()},
+			},
+			InitialDelaySeconds: 1,
+			PeriodSeconds:       3,
+			TimeoutSeconds:      3,
+			FailureThreshold:    30,
+		},
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: ptr(false),
+			Privileged:               ptr(false),
+			ReadOnlyRootFilesystem:   ptr(false), // the guest is a dev box; it writes everywhere
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+				Add: []corev1.Capability{
+					"CHOWN", "FOWNER", "DAC_OVERRIDE", "SETUID", "SETGID",
+				},
+			},
+			SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		},
+	}
+}
+
+// sshdContainerSpec is the machine's inbound-SSH half (K4): the same image, run
+// as sshd instead of the guest agent.
+//
+// A SIDECAR rather than a process inside the guest container, because there is
+// no systemd here to supervise a second daemon — the kubelet is this backend's
+// process supervisor, and it supervises containers. Sharing the pod's network
+// namespace is what makes that work: sshd binds 127.0.0.1:22 exactly as it does
+// inside a microVM, and the guest agent's ssh forward reaches it over loopback
+// from the other container. Nothing in the cluster can reach port 22, because
+// nothing outside the pod can address the pod's loopback.
+//
+// It mounts the persist volume for two reasons, both about identity: the host
+// keys it generates live there (so a machine's fingerprint survives a restart),
+// and the session user's home — where the injector writes authorized_keys — is
+// on it.
+func sshdContainerSpec(image string) corev1.Container {
+	return corev1.Container{
+		Name:            sshdContainer,
+		Image:           image,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         sshdCommand,
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: persistVolume, MountPath: persistMountPath},
+		},
+		Resources: sshdResources(),
+		// A machine is reported running once its POD is ready, and a pod is
+		// ready only when every container is. Without this probe the sshd
+		// container counts as ready the moment it starts — before it has
+		// finished generating a machine's first host keys — so a user told
+		// their machine is running could open a terminal but have an ssh
+		// connection closed under them. The probe closes that window by making
+		// "running" mean every advertised surface is actually up.
+		//
+		// bash, not sh: /dev/tcp is a bash feature and the image's /bin/sh is
+		// dash, where this would fail whatever sshd was doing.
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				Exec: &corev1.ExecAction{Command: sshdProbeCommand()},
+			},
+			InitialDelaySeconds: 1,
+			PeriodSeconds:       3,
+			TimeoutSeconds:      3,
+			FailureThreshold:    30,
+		},
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: ptr(false),
+			Privileged:               ptr(false),
+			ReadOnlyRootFilesystem:   ptr(false), // sshd writes its privsep dir under /run
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+				// sshd starts as root and drops to the session user (SETUID/
+				// SETGID), reads a home it does not own (DAC_OVERRIDE), owns the
+				// host keys it generates (CHOWN), and privilege-separates by
+				// chrooting its unprivileged listener (SYS_CHROOT).
+				Add: []corev1.Capability{
+					"CHOWN", "DAC_OVERRIDE", "SETUID", "SETGID", "SYS_CHROOT",
+				},
+			},
+			SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		},
+	}
+}
+
+// sshdProbeCommand opens a loopback connection to sshd and closes it, which is
+// the only question readiness has to answer: is the daemon accepting yet.
+func sshdProbeCommand() []string {
+	return []string{"bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/22"}
+}
+
+// sshdResources is the sidecar's fixed, small footprint — see sshdCPUMilli.
+func sshdResources() corev1.ResourceRequirements {
+	cpu := *resource.NewMilliQuantity(sshdCPUMilli, resource.DecimalSI)
+	mem := *resource.NewQuantity(sshdMemoryMiB*1024*1024, resource.BinarySI)
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{corev1.ResourceCPU: cpu, corev1.ResourceMemory: mem},
+		Limits:   corev1.ResourceList{corev1.ResourceCPU: cpu, corev1.ResourceMemory: mem},
+	}
+}
+
+// machineDNSConfig lowers ndots for machine pods. The kubelet's default of 5
+// means any name with fewer than five dots — github.com, registry.npmjs.org,
+// api.anthropic.com — is tried against every cluster search domain BEFORE being
+// asked for as written.
+//
+// That is the right default for a workload that talks to Services by short name.
+// A machine is not one: it is a dev box whose lookups are overwhelmingly public
+// names, and the same reasoning already turns off the service-account token and
+// the service env vars. Inside a Firecracker guest there is no cluster search
+// path at all, so this also brings the two backends closer together.
+//
+// It is not only wasted queries. On a cluster whose search domain answers
+// wildcards — which is not exotic; a homelab with a catch-all internal zone does
+// it — `github.com` resolves via `github.com.<search domain>` to an internal
+// address, and the machine's egress policy then blocks it for being private
+// space. Cloning from GitHub fails, and it looks exactly like a ProteOS network
+// bug rather than a DNS one. ndots=1 asks for the name as written first.
+func machineDNSConfig() *corev1.PodDNSConfig {
+	return &corev1.PodDNSConfig{
+		Options: []corev1.PodDNSConfigOption{{Name: "ndots", Value: ptr("1")}},
+	}
+}
+
 // guestEnv sets the guest-agent's listeners and paths explicitly rather than
 // relying on the image's ENV, so the driver and the image cannot drift apart on
 // which ports the pod IP is dialed at.
@@ -219,6 +332,9 @@ func guestEnv() []corev1.EnvVar {
 		{Name: "PROTEOS_GUEST_LISTEN", Value: listenSpec(api.GuestTerminalPort)},
 		{Name: "PROTEOS_GUEST_WEB_LISTEN", Value: listenSpec(api.GuestWebPort)},
 		{Name: "PROTEOS_GUEST_PREVIEW_LISTEN", Value: listenSpec(api.GuestPreviewPort)},
+		// The inbound-SSH forward. Its backend is the default 127.0.0.1:22 —
+		// the sshd sidecar, over the network namespace the two containers share.
+		{Name: "PROTEOS_GUEST_SSH_LISTEN", Value: listenSpec(api.GuestSSHPort)},
 		{Name: "PROTEOS_GUEST_PERSIST", Value: persistMountPath},
 		{Name: "PROTEOS_GUEST_ENV_DIR", Value: runMountPath + "/env"},
 	}

@@ -47,6 +47,9 @@ func newDriver(t *testing.T, bootDelay time.Duration) (*k8s.Driver, *fakecluster
 		RuntimeClass:   "gvisor",
 		ClusterCIDRs:   []string{"10.244.0.0/16"},
 		CapacityTTL:    time.Nanosecond, // no caching in tests
+		// A fake cluster's pod IPs route nowhere, so any test that reaches an
+		// actual dial must fail fast rather than sit in the OS connect timeout.
+		DialTimeout: 100 * time.Millisecond,
 	})
 	return d, cluster
 }
@@ -134,11 +137,32 @@ func TestEnsureBuildsTheExpectedPod(t *testing.T) {
 		"PROTEOS_GUEST_LISTEN":         "tcp:0.0.0.0:1024",
 		"PROTEOS_GUEST_WEB_LISTEN":     "tcp:0.0.0.0:1025",
 		"PROTEOS_GUEST_PREVIEW_LISTEN": "tcp:0.0.0.0:1026",
+		"PROTEOS_GUEST_SSH_LISTEN":     "tcp:0.0.0.0:1027",
 		"PROTEOS_GUEST_PERSIST":        "/persist",
 		"PROTEOS_GUEST_ENV_DIR":        "/run/proteos/env",
 	} {
 		if env[k] != want {
 			t.Errorf("env %s = %q, want %q", k, env[k], want)
+		}
+	}
+
+	// A machine resolves public names, not Services. The kubelet's ndots=5 sends
+	// every name with fewer than five dots around the cluster search path first,
+	// which is wasted work everywhere and actively wrong on a cluster whose
+	// search domain answers wildcards: github.com resolves to an internal address
+	// and the machine's own egress policy then blocks it, which looks like a
+	// ProteOS network bug rather than a DNS one. Found on a real cluster.
+	if pod.Spec.DNSConfig == nil {
+		t.Error("machine pod inherits the cluster's ndots, so public names resolve through the search path first")
+	} else {
+		var ndots string
+		for _, o := range pod.Spec.DNSConfig.Options {
+			if o.Name == "ndots" && o.Value != nil {
+				ndots = *o.Value
+			}
+		}
+		if ndots != "1" {
+			t.Errorf("ndots = %q, want 1", ndots)
 		}
 	}
 
@@ -152,6 +176,162 @@ func TestEnsureBuildsTheExpectedPod(t *testing.T) {
 	}
 	if runVol == nil || runVol.EmptyDir == nil || runVol.EmptyDir.Medium != corev1.StorageMediumMemory {
 		t.Error("/run/proteos is not a memory-backed emptyDir; injected secrets would land on disk")
+	}
+}
+
+// K4: inbound SSH is a second container in the pod, not a second process in the
+// guest container — the kubelet is this backend's process supervisor and it
+// supervises containers, not daemons. What makes that work is the network
+// namespace the two share: sshd binds loopback exactly as it does inside a
+// microVM, and the guest agent's forward reaches it there.
+func TestPodRunsSSHDAsASidecar(t *testing.T) {
+	d, cluster := newDriver(t, 0)
+	ctx := context.Background()
+	const id = "aaaaaaaa-0000-4000-8000-00000000000b"
+
+	if _, err := d.EnsureRunning(ctx, spec(id)); err != nil {
+		t.Fatalf("EnsureRunning: %v", err)
+	}
+	pod, err := cluster.CoreV1().Pods(testNamespace).Get(ctx, "m-"+id, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+
+	var sshd *corev1.Container
+	for i := range pod.Spec.Containers {
+		if pod.Spec.Containers[i].Name == "sshd" {
+			sshd = &pod.Spec.Containers[i]
+		}
+	}
+	if sshd == nil {
+		t.Fatalf("no sshd container in the pod (containers: %d)", len(pod.Spec.Containers))
+	}
+	if sshd.Image != testImage {
+		t.Errorf("sshd image = %q, want the guest image %q — sshd and the session user must come from one image", sshd.Image, testImage)
+	}
+	if len(sshd.Command) != 1 || sshd.Command[0] != "/usr/local/bin/proteos-sshd" {
+		t.Errorf("sshd command = %v, want the proteos-sshd entrypoint", sshd.Command)
+	}
+
+	// The persist volume is not optional for this container: the host keys it
+	// generates live there (so a machine keeps its fingerprint across restarts)
+	// and so does the home the injector writes authorized_keys into.
+	var mounted bool
+	for _, m := range sshd.VolumeMounts {
+		if m.Name == "persist" && m.MountPath == "/persist" {
+			mounted = true
+		}
+	}
+	if !mounted {
+		t.Error("sshd does not mount the persist volume; host keys and authorized_keys both live there")
+	}
+
+	// sshd starts as root and drops to the session user, so it keeps a few
+	// capabilities the guest container does not need — but never the whole set.
+	if len(sshd.SecurityContext.Capabilities.Drop) != 1 || sshd.SecurityContext.Capabilities.Drop[0] != "ALL" {
+		t.Errorf("sshd capabilities.drop = %v, want [ALL]", sshd.SecurityContext.Capabilities.Drop)
+	}
+	added := map[corev1.Capability]bool{}
+	for _, c := range sshd.SecurityContext.Capabilities.Add {
+		added[c] = true
+	}
+	if !added["SETUID"] || !added["SETGID"] || !added["SYS_CHROOT"] {
+		t.Errorf("sshd capabilities.add = %v; it cannot drop to the session user or privilege-separate without these",
+			sshd.SecurityContext.Capabilities.Add)
+	}
+	if sshd.SecurityContext.Privileged != nil && *sshd.SecurityContext.Privileged {
+		t.Error("sshd container is privileged")
+	}
+
+	// A machine is "running" when its pod is ready, and a pod is ready only when
+	// every container is. Without a probe here the sshd container is ready the
+	// moment it starts — before it has generated the machine's first host keys —
+	// and a user told their machine is running would have an ssh connection
+	// closed under them. The kind e2e failed exactly this way before the probe.
+	if sshd.ReadinessProbe == nil || sshd.ReadinessProbe.Exec == nil {
+		t.Error("sshd has no readiness probe, so a machine reports running before ssh accepts")
+	}
+
+	// Port 22 is deliberately NOT declared on the pod: sshd binds the pod's
+	// loopback, and the only route in is the guest agent's forward on 1027.
+	for _, c := range pod.Spec.Containers {
+		for _, p := range c.Ports {
+			if p.ContainerPort == 22 {
+				t.Error("port 22 is declared on the pod; sshd is reachable only through the guest tunnel")
+			}
+		}
+	}
+}
+
+// A machine is running as soon as its GUEST is ready, which is deliberate — a
+// broken sshd must not cost a user their terminal — so the ssh dial is the only
+// place that can tell a caller sshd is not up yet. Without this gate the caller
+// gets a connection the guest's forward closes the moment it fails to reach
+// sshd, which reads as a mysterious EOF rather than "not ready".
+func TestSSHDialRefusedUntilSSHDIsReady(t *testing.T) {
+	d, cluster := newDriver(t, 0)
+	ctx := context.Background()
+	const id = "aaaaaaaa-0000-4000-8000-00000000000c"
+
+	if _, err := d.EnsureRunning(ctx, spec(id)); err != nil {
+		t.Fatalf("EnsureRunning: %v", err)
+	}
+	if err := cluster.SSHDNotReady(testNamespace, "m-"+id); err != nil {
+		t.Fatalf("SSHDNotReady: %v", err)
+	}
+
+	// The machine is still running: only ssh is unavailable.
+	st, err := d.Status(ctx, id)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if st.State != api.StateRunning {
+		t.Fatalf("state = %q, want running — a machine whose terminal works is running", st.State)
+	}
+
+	_, err = d.DialGuest(ctx, id, api.GuestSSHPort)
+	if err == nil || !strings.Contains(err.Error(), "sshd") {
+		t.Fatalf("ssh dial error = %v, want one naming sshd", err)
+	}
+
+	// The terminal is unaffected — it gets as far as an actual dial (which a
+	// fake pod IP cannot answer), rather than being refused by the ssh gate.
+	_, err = d.DialGuest(ctx, id, api.GuestTerminalPort)
+	if err != nil && strings.Contains(err.Error(), "sshd") {
+		t.Errorf("the ssh gate refused a terminal dial: %v", err)
+	}
+}
+
+// A machine's usage is the shape it was created with, whatever its pod requests
+// say. The two diverge by design — CPURequestRatio scales requests down to fit a
+// machine on a small node, and the sshd sidecar adds a slice of its own — and
+// the control plane is asking the first question, not the second. Both wrong
+// answers have been shipped: a 1-vcpu machine reported as 2, then as 0 on a
+// cluster configured to oversubscribe.
+func TestCapacityUsesDeclaredShapesNotPodRequests(t *testing.T) {
+	d, cluster := newDriver(t, 0)
+	ctx := context.Background()
+	const id = "aaaaaaaa-0000-4000-8000-00000000000d"
+
+	// One vcpu, and a driver that requests a tenth of one for it.
+	oversubscribed := k8s.New(cluster, k8s.Config{
+		Namespace:       testNamespace,
+		CPURequestRatio: 0.1,
+		CapacityTTL:     time.Nanosecond,
+	})
+	s := spec(id)
+	s.Vcpus, s.MemMiB = 1, 1024
+	if _, err := oversubscribed.EnsureRunning(ctx, s); err != nil {
+		t.Fatalf("EnsureRunning: %v", err)
+	}
+
+	cap, err := d.Capacity(ctx)
+	if err != nil {
+		t.Fatalf("Capacity: %v", err)
+	}
+	if cap.UsedVcpus != 1 || cap.UsedMemMiB != 1024 {
+		t.Errorf("used = %d vcpus / %d MiB, want the declared 1 / 1024 (requests would say 0 / 1088)",
+			cap.UsedVcpus, cap.UsedMemMiB)
 	}
 }
 
@@ -537,8 +717,11 @@ func TestCapacityCountsSchedulableNodesOnly(t *testing.T) {
 	if cap.TotalMemMiB != 32768 {
 		t.Errorf("total mem = %d MiB, want 32768", cap.TotalMemMiB)
 	}
+	// The shape the machine was created with, not the sum of its pod's requests:
+	// those carry the CPU oversubscription ratio and the sshd sidecar's fixed
+	// slice, neither of which the control plane asked for or reasons about.
 	if cap.UsedVcpus != 2 || cap.UsedMemMiB != 2048 {
-		t.Errorf("used = %d vcpus / %d MiB, want 2 / 2048", cap.UsedVcpus, cap.UsedMemMiB)
+		t.Errorf("used = %d vcpus / %d MiB, want the machine's declared 2 / 2048", cap.UsedVcpus, cap.UsedMemMiB)
 	}
 	if cap.UsedDiskMiB != 20480 {
 		t.Errorf("used disk = %d MiB, want 20480 (the machine's PVC)", cap.UsedDiskMiB)

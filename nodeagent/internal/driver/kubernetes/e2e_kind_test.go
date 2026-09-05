@@ -180,13 +180,24 @@ func (a *agent) cleanup(t *testing.T, id string) {
 // connection the cluster-agent made to the pod IP.
 func (a *agent) dialGuest(t *testing.T, id string, port uint32) net.Conn {
 	t.Helper()
+	conn, err := a.tryDialGuest(id, port)
+	if err != nil {
+		t.Fatalf("dial guest: %v", err)
+	}
+	return conn
+}
+
+// tryDialGuest is dialGuest for callers that expect a refusal and want to retry
+// rather than fail — the ssh port is not servable until the sshd sidecar is
+// ready, which is a state a machine legitimately passes through.
+func (a *agent) tryDialGuest(id string, port uint32) (net.Conn, error) {
 	u, err := url.Parse(a.url)
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	conn, err := tls.Dial("tcp", u.Host, &tls.Config{InsecureSkipVerify: true})
 	if err != nil {
-		t.Fatalf("dial agent: %v", err)
+		return nil, fmt.Errorf("dial agent: %w", err)
 	}
 	path := fmt.Sprintf("/v1/machines/%s/guest?%s=%d", id, api.GuestPortParam, port)
 	req := "GET " + path + " HTTP/1.1\r\n" +
@@ -196,25 +207,26 @@ func (a *agent) dialGuest(t *testing.T, id string, port uint32) net.Conn {
 		"Upgrade: " + api.UpgradeGuestProto + "\r\n\r\n"
 	if _, err := conn.Write([]byte(req)); err != nil {
 		conn.Close()
-		t.Fatalf("write upgrade: %v", err)
+		return nil, fmt.Errorf("write upgrade: %w", err)
 	}
 	br := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(br, nil)
 	if err != nil {
 		conn.Close()
-		t.Fatalf("read upgrade response: %v", err)
+		return nil, fmt.Errorf("read upgrade response: %w", err)
 	}
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		b, _ := io.ReadAll(resp.Body)
 		conn.Close()
-		t.Fatalf("guest tunnel: want 101, got %d: %s", resp.StatusCode, b)
+		return nil, fmt.Errorf("guest tunnel: want 101, got %d: %s", resp.StatusCode, b)
 	}
 	if br.Buffered() > 0 {
 		// The agent writes nothing after the 101 before piping, so anything
 		// buffered would mean the framing assumption is wrong.
-		t.Fatalf("unexpected %d bytes buffered after the 101", br.Buffered())
+		conn.Close()
+		return nil, fmt.Errorf("unexpected %d bytes buffered after the 101", br.Buffered())
 	}
-	return conn
+	return conn, nil
 }
 
 // terminal opens a PTY session over the tunnel and returns it plus the tunnel to
@@ -401,6 +413,214 @@ func TestKindPreviewForward(t *testing.T) {
 	if !strings.Contains(string(body), "preview-ok") {
 		t.Errorf("preview did not reach the in-guest server; got %q", tail(string(body)))
 	}
+}
+
+// TestKindSSH proves the K4 sshd sidecar end to end: that sshd is running beside
+// the guest, that the guest agent's forward reaches it over the pod's loopback,
+// that a key placed where the control plane's injector puts it actually
+// authenticates, and that the machine keeps its host identity across a restart.
+//
+// The three-way home alignment is the subtle part and is asserted directly.
+// sshd reads $HOME and AuthorizedKeysFile from the passwd entry; the guest agent
+// starts sessions in the PERSISTED home and the injector writes there. If those
+// drift apart, ssh authenticates against a file nothing ever writes — and every
+// other assertion in this test would still pass.
+func TestKindSSH(t *testing.T) {
+	a := newAgent(t)
+	const id = "e2e0kind-0000-4000-8000-000000000005"
+	a.cleanup(t, id)
+
+	a.ensure(t, id)
+	a.waitState(t, id, api.StateRunning, bootTimeout)
+
+	// 1. sshd answers through the tunnel. The forward is the only route in:
+	// sshd binds the pod's loopback, which nothing outside the pod can address.
+	//
+	// Retried, because a machine is RUNNING as soon as its guest container is
+	// ready and sshd is ready a little later on a first boot — it generates the
+	// machine's host keys. That ordering is deliberate (a broken sshd must not
+	// cost a user their terminal), so the driver refuses an ssh dial until sshd
+	// is ready rather than handing back a connection that closes. Waiting here
+	// is what a client does; asserting on the first attempt would be asserting
+	// the opposite design.
+	banner := waitForSSHBanner(t, a, id, 90*time.Second)
+	if !strings.HasPrefix(banner, "SSH-2.0-") {
+		t.Fatalf("guest port %d is not sshd; got %q", api.GuestSSHPort, banner)
+	}
+
+	ws, tunnel := a.terminal(t, id, "ssh")
+	defer tunnel.Close()
+	defer ws.Close()
+
+	// 2. The homes agree, and they are on the volume.
+	out := runInGuest(t, ws,
+		`echo "home=$HOME passwd=$(getent passwd dev | cut -d: -f6)"; `+echoMarker("HOME-CHECK"),
+		"HOME-CHECK", 60*time.Second)
+	if !strings.Contains(out, "home=/persist/home passwd=/persist/home") {
+		t.Fatalf("the session home and the passwd home disagree, so sshd would read authorized_keys "+
+			"from a directory nothing writes: %q", tail(out))
+	}
+
+	// 3. A key where the injector puts it authenticates. Generated in-guest so
+	// the private half never leaves the machine, and used from the guest
+	// container against the sidecar's loopback sshd — the same daemon the
+	// tunnel reached above.
+	runInGuest(t, ws,
+		`ssh-keygen -q -t ed25519 -f /tmp/e2e_key -N "" && mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh" && `+
+			`cat /tmp/e2e_key.pub > "$HOME/.ssh/authorized_keys" && chmod 600 "$HOME/.ssh/authorized_keys" && `+
+			echoMarker("KEY-INSTALLED"),
+		"KEY-INSTALLED", 60*time.Second)
+
+	out = runInGuest(t, ws,
+		`ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes `+
+			`-i /tmp/e2e_key dev@127.0.0.1 "id -un; pwd" >/tmp/ssh.out 2>/tmp/ssh.err; echo "rc=$?"; `+
+			`cat /tmp/ssh.out /tmp/ssh.err; `+echoMarker("SSH-DONE"),
+		"SSH-DONE", 90*time.Second)
+	if !strings.Contains(out, "rc=0") {
+		t.Fatalf("ssh login failed: %q", tail(out))
+	}
+	// The session lands as the unprivileged user, in the home that survives.
+	if !strings.Contains(out, "dev") || !strings.Contains(out, "/persist/home") {
+		t.Errorf("ssh session is not the `dev` user in the persisted home: %q", tail(out))
+	}
+
+	// 4. The host identity is the machine's, not the image's, and it survives.
+	// Take the fingerprint sshd presents, restart the machine, take it again: an
+	// image-baked key would make every machine identical, and an ephemeral one
+	// would change here and greet the user with a host-key warning on every
+	// boot. A stable fingerprint across a fresh container is also the only
+	// evidence that the keys are really on the volume.
+	out = runInGuest(t, ws, hostKeyFingerprintCmd+echoMarker("FP-1"), "FP-1", 60*time.Second)
+	before := fingerprint(t, out)
+	ws.Close()
+	tunnel.Close()
+
+	resp := a.do(t, http.MethodPost, "/v1/machines/"+id+"/stop", api.StopRequest{Mode: api.StopModePoweroff})
+	resp.Body.Close()
+	a.waitState(t, id, api.StateStopped, 2*time.Minute)
+	a.ensure(t, id)
+	a.waitState(t, id, api.StateRunning, bootTimeout)
+
+	ws2, tunnel2 := a.terminal(t, id, "ssh-after-restart")
+	defer tunnel2.Close()
+	defer ws2.Close()
+	out = runInGuest(t, ws2, hostKeyFingerprintCmd+echoMarker("FP-2"), "FP-2", 60*time.Second)
+	if after := fingerprint(t, out); after != before {
+		t.Errorf("host key changed across a restart (%s -> %s); every reconnect would warn the user", before, after)
+	}
+}
+
+// waitForSSHBanner dials the machine's ssh port until sshd answers, and returns
+// what it said. Both failure modes are retried and distinguished in the final
+// message: the driver refusing the dial (sshd not ready yet) and the dial
+// succeeding but the guest's forward closing it (sshd not listening).
+func waitForSSHBanner(t *testing.T, a *agent, id string, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last string
+	for time.Now().Before(deadline) {
+		conn, err := a.tryDialGuest(id, api.GuestSSHPort)
+		if err != nil {
+			last = "dial refused: " + err.Error()
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
+		buf := make([]byte, 64)
+		n, err := conn.Read(buf)
+		conn.Close()
+		if n > 0 {
+			return string(buf[:n])
+		}
+		last = fmt.Sprintf("read: %v", err)
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("sshd never answered on guest port %d within %s (last: %s)", api.GuestSSHPort, timeout, last)
+	return ""
+}
+
+// hostKeyFingerprintCmd prints the fingerprint of the host key sshd PRESENTS,
+// asked over the protocol rather than read off the volume. Two reasons, and the
+// first is that reading the file does not work: the host key directory is
+// root-only (private keys live in it) and a session runs as the unprivileged
+// user, so ssh-keygen -lf answers "Permission denied". The second is that this
+// is the better assertion anyway — what a client pins is the key sshd offers,
+// not a file that happens to sit next to it.
+//
+// The FP: tag is concatenated by awk at run time so it never appears literally
+// in the command. Same reason echoMarker splits its marker: a PTY echoes what is
+// typed into it, so a command containing its own tag is matched against the echo
+// rather than the output, and the assertion compares the command with itself.
+// (It did, on the first run of this test: "before" and "after" were both a
+// fragment of the awk program.)
+const hostKeyFingerprintCmd = `ssh-keyscan -t ed25519 127.0.0.1 2>/dev/null | ssh-keygen -lf - | awk '{print "F" "P:" $2}'; `
+
+// fingerprint pulls the tagged fingerprint out of a PTY buffer. It insists on a
+// SHA256: value and fails the test otherwise, so no other line — an echo, a
+// prompt, an error — can be mistaken for one and make the before/after
+// comparison trivially true.
+func fingerprint(t *testing.T, out string) string {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		i := strings.Index(line, "FP:")
+		if i < 0 {
+			continue
+		}
+		if fp := strings.TrimSpace(line[i+len("FP:"):]); strings.HasPrefix(fp, "SHA256:") {
+			return fp
+		}
+	}
+	t.Fatalf("no host key fingerprint in guest output: %q", tail(out))
+	return ""
+}
+
+// TestKindCodeServer proves the web forward against a real pod: the guest agent
+// starts code-server lazily on the first connection to the web port, and the
+// tunnel carries plain HTTP to it. Nothing here is Kubernetes-specific except
+// the thing that has never been tested on this backend — that a lazily-started,
+// heavyweight child process inside a machine POD is reachable the same way it is
+// inside a microVM.
+func TestKindCodeServer(t *testing.T) {
+	a := newAgent(t)
+	const id = "e2e0kind-0000-4000-8000-000000000006"
+	a.cleanup(t, id)
+
+	a.ensure(t, id)
+	a.waitState(t, id, api.StateRunning, bootTimeout)
+
+	// code-server is started on demand and takes a while the first time (it
+	// unpacks its own extensions), so this retries rather than assuming the
+	// first connection is answered.
+	deadline := time.Now().Add(3 * time.Minute)
+	var last string
+	for time.Now().Before(deadline) {
+		status, body := httpOverTunnel(t, a, id, api.GuestWebPort)
+		last = status + " " + body
+		// 302 to /login is what an unauthenticated code-server answers with;
+		// 200 is what it serves when auth is off. Either proves it is there.
+		if strings.Contains(status, " 200") || strings.Contains(status, " 302") {
+			return
+		}
+		time.Sleep(5 * time.Second)
+	}
+	t.Fatalf("code-server never answered through the web forward; last response: %q", tail(last))
+}
+
+// httpOverTunnel sends one HTTP/1.0 request to a guest port and returns the
+// status line and body. HTTP/1.0 so the guest closes the connection and the read
+// terminates without parsing content-length.
+func httpOverTunnel(t *testing.T, a *agent, id string, port uint32) (string, string) {
+	t.Helper()
+	conn := a.dialGuest(t, id, port)
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+	if _, err := conn.Write([]byte("GET / HTTP/1.0\r\nHost: guest\r\n\r\n")); err != nil {
+		return "", ""
+	}
+	raw, _ := io.ReadAll(conn)
+	text := string(raw)
+	status, body, _ := strings.Cut(text, "\r\n")
+	return status, body
 }
 
 // TestKindCapacity checks the synthesized cluster capacity is derived from the

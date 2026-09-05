@@ -16,6 +16,16 @@ Two machines — see RUNBOOK.md "Topology" for the full diagram:
 - **KVM host(s)**: the native `proteos-node-agent` (cannot be containerised —
   needs `/dev/kvm`, root, the jailer, host nftables). Not covered here; see
   `deploy/node-agent/` and RUNBOOK Part A.
+- **Kubernetes cluster(s)**, optionally and instead: the same node-agent
+  running the `kubernetes` driver as an in-cluster Deployment, where a machine
+  is a Pod rather than a microVM. It joins this stack as one more entry in
+  `PROTEOS_HOSTS` with `"driver": "kubernetes"`, and needs no ingress — the
+  control plane dials the agent on one TLS port and every user-facing surface
+  (terminal, code-server, previews, SSH) is multiplexed over that one
+  connection. Setup is `deploy/kubernetes/README.md`, operations RUNBOOK Part K,
+  and the isolation trade-off SECURITY.md. A fleet may mix both kinds of host;
+  the templates a machine can be created from decide which hosts it can land on
+  (`rootfs_ref` for Firecracker, `image_ref` for Kubernetes).
 
 ## Images
 

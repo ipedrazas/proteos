@@ -55,6 +55,7 @@ must know precisely what differs.
 | Kernel | one per machine | shared with the node, unless a sandboxed RuntimeClass (gVisor/Kata) is installed |
 | Guest reachability | vsock only; no listening socket on any network | TCP listeners on the pod IP, restricted by NetworkPolicy |
 | Guest listener auth | none needed (vsock is the boundary) | none yet; NetworkPolicy is the only control |
+| Inbound SSH | sshd under systemd, bound to 127.0.0.1 | sshd in a sidecar container, bound to the pod's 127.0.0.1 |
 | Encryption at rest | per-machine LUKS key, held by the control plane and never written to the host | the StorageClass's responsibility |
 | Egress control | nftables on the machine's tap | NetworkPolicy, from an IP snapshot taken at boot |
 | Passwordless sudo in the guest | yes | not installed in the image |
@@ -75,6 +76,17 @@ What this means in practice:
 - **The per-machine volume key is not used.** There is no host on which to
   `luksOpen` it, so the driver accepts it, ignores it, and logs the fact. Use an
   encrypted StorageClass to restore encryption at rest.
+- **SSH does not widen the surface.** sshd runs as a second container in the
+  machine pod and binds the pod's loopback, which nothing outside that pod can
+  address — the same property the microVM's `ListenAddress 127.0.0.1` gives. The
+  only route to it is the guest agent's forward on the machine's SSH port, which
+  the cluster-agent reaches under the same NetworkPolicy as every other guest
+  port, and which the control-plane gateway authenticates. Authentication is
+  key-only against the keys the control plane injects; the image contains no
+  passwords, and sshd is configured with every kind of forwarding disabled so it
+  cannot become a second egress path around the machine's NetworkPolicy. Host
+  keys are generated per machine on its own volume — never baked into the image,
+  where every machine would share one identity.
 - **Egress policy is a snapshot.** `allow_domains` / `deny_domains` resolve to
   addresses once, when the machine boots. A domain that later moves to a new
   address is not followed. FQDN-aware egress needs a CNI policy engine

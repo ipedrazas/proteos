@@ -78,6 +78,12 @@ var podsGVR = schema.GroupVersionResource{Version: "v1", Resource: "pods"}
 // readiness per container, not per pod.
 const guestContainer = "guest"
 
+// sshdContainer likewise: a kubelet reports a status per container, and the
+// driver reads this one to decide whether an ssh dial can be served yet (K4).
+// A fake that reported only the guest container would make every machine look
+// like one whose sshd never came up.
+const sshdContainer = "sshd"
+
 // New builds the simulated cluster. Close it (or let the test end) when done.
 func New(opts Options) *Cluster {
 	if opts.Namespace == "" {
@@ -146,11 +152,35 @@ func settle(pod *corev1.Pod, ip string, failed bool) {
 	}
 	pod.Status.Phase = corev1.PodRunning
 	pod.Status.PodIP = ip
-	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
-		Name:  guestContainer,
-		Ready: true,
-		State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
-	}}
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{
+		{
+			Name:  guestContainer,
+			Ready: true,
+			State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+		},
+		{
+			Name:  sshdContainer,
+			Ready: true,
+			State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+		},
+	}
+}
+
+// SSHDNotReady marks a running machine's sshd container as not ready, the state
+// a real pod passes through while sshd generates the machine's first host keys.
+// The guest container is left ready, because that is the whole point: the
+// machine is running and its terminal works while ssh is not servable yet.
+func (c *Cluster) SSHDNotReady(namespace, name string) error {
+	pod, err := c.client.CoreV1().Pods(namespace).Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	for i := range pod.Status.ContainerStatuses {
+		if pod.Status.ContainerStatuses[i].Name == sshdContainer {
+			pod.Status.ContainerStatuses[i].Ready = false
+		}
+	}
+	return c.client.Tracker().Update(podsGVR, pod, namespace)
 }
 
 // scheduleLater flips a pod to its final phase after BootDelay, so the async

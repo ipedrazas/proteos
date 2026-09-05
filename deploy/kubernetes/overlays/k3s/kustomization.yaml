@@ -1,0 +1,36 @@
+# k3s overlay — a single-node (or small) k3s cluster, the shape a self-hosted
+# ProteOS fleet is most likely to meet first.
+#
+# It changes only what k3s itself decides differently from a managed cluster:
+# how the control plane reaches the agent, which StorageClass exists, and the
+# pod/service CIDRs the machine egress policy must deny. Everything security-
+# relevant — the RBAC, the NetworkPolicies, the sandboxed RuntimeClass — comes
+# from base/ unchanged, because those are exactly the parts that must not be
+# quietly simplified per environment.
+#
+#   kubectl apply -k deploy/kubernetes/overlays/k3s/
+#
+# Read deploy/kubernetes/README.md first: the Secret, gVisor and the image pull
+# secret are prerequisites this overlay assumes, not things it creates.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  # k3s ships no sandboxed runtime, so the RuntimeClass the base Deployment
+  # names has to be created here — after runsc is installed on the nodes
+  # (deploy/kubernetes/gvisor-k3s.sh). Applying it without installing runsc
+  # leaves every machine pod Pending, which is the honest failure: the agent
+  # refuses to start when the class is missing, and a class naming a handler the
+  # nodes do not have is the same mistake one step later.
+  - runtimeclass.yaml
+
+patches:
+  - path: service-lb.yaml
+    target:
+      kind: Service
+      name: proteos-cluster-agent
+  - path: agent-env.yaml
+    target:
+      kind: Deployment
+      name: proteos-cluster-agent
