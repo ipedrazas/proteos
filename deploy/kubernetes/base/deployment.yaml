@@ -36,7 +36,14 @@ spec:
       containers:
         - name: node-agent
           image: ghcr.io/tavon-ai/proteos-node-agent:latest
-          imagePullPolicy: IfNotPresent
+          # Always, because the tag above is mutable. Kubernetes defaults a
+          # `latest` tag to Always for exactly this reason, and IfNotPresent
+          # overrides that: a node that has ever cached this tag keeps running
+          # whatever it cached, so a deploy of new code silently does nothing.
+          # That is not hypothetical — it happened here, on a node that had
+          # pulled `latest` an hour before the tag moved. Pin a digest or an
+          # immutable tag instead and this can go back to IfNotPresent.
+          imagePullPolicy: Always
           ports:
             - name: api
               containerPort: 9090
