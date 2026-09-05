@@ -14,3 +14,15 @@ kind: RuntimeClass
 metadata:
   name: gvisor
 handler: runsc
+# Machine pods may only be scheduled where runsc actually exists. Without this a
+# machine lands on whichever node the scheduler likes; on a node that has not had
+# gvisor-k3s.sh run on it the pod fails to start, and the user sees a broken
+# machine rather than an un-rolled-out cluster. A cluster is mixed for the whole
+# of any rollout, and permanently if machines are meant to run on a subset of
+# nodes, so this is not a transitional concern.
+#
+# Label the nodes that have the runtime:
+#     kubectl label node <node> proteos.io/sandbox=gvisor
+scheduling:
+  nodeSelector:
+    proteos.io/sandbox: gvisor

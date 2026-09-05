@@ -27,6 +27,7 @@ CHECK_ONLY=0
 [[ "${1:-}" == "--check" ]] && CHECK_ONLY=1
 
 CONTAINERD_CONFIG=/var/lib/rancher/k3s/agent/etc/containerd/config.toml
+DROPIN_NAME=10-proteos-runsc.toml
 
 log() { printf '\e[1;34m[gvisor]\e[0m %s\n' "$*"; }
 ok() { printf '\e[1;32m[ ok ]\e[0m %s\n' "$*"; }
@@ -60,41 +61,107 @@ fi
 command -v containerd-shim-runsc-v1 >/dev/null ||
     die "containerd-shim-runsc-v1 is missing — containerd cannot launch a sandbox without it"
 
+# k3s_unit is whichever k3s service this node runs: a server runs `k3s`, an agent
+# runs `k3s-agent`, and restarting the wrong one silently does nothing.
+k3s_unit() {
+    for unit in k3s k3s-agent; do
+        if systemctl is-active --quiet "$unit"; then
+            echo "$unit"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# write_dropin registers runsc through containerd's import mechanism, which is
+# how k3s supports extra runtimes without owning the whole config
+# (https://docs.k3s.io/advanced#configuring-containerd). Both the import
+# directory and the plugin table name are READ OUT of the config k3s generated on
+# this node rather than assumed: the directory moved between k3s releases
+# (config.toml.d → config-v3.toml.d) and the plugin path moved between containerd
+# releases (io.containerd.grpc.v1.cri → io.containerd.cri.v1.runtime). Copying
+# the shape of the runc block that is already there cannot be wrong about either.
+#
+# This is deliberately NOT a config template. A template replaces the generated
+# config wholesale, so getting it wrong for your version takes the node's entire
+# containerd down; a drop-in only adds a runtime.
+write_dropin() {
+    local imports_line dropin_dir runc_header runsc_header
+    imports_line="$(grep -m1 '^imports' "$CONTAINERD_CONFIG" || true)"
+    if [[ -z $imports_line ]]; then
+        die "$CONTAINERD_CONFIG has no imports line: this k3s is too old for drop-in
+containerd config. Register runsc with a config template instead (see
+https://docs.k3s.io/advanced#configuring-containerd) — this script will not guess
+one, because a wrong template takes the node's whole containerd down."
+    fi
+    dropin_dir="$(dirname "$(echo "$imports_line" | sed -E 's/.*"([^"]+)".*/\1/')")"
+
+    runc_header="$(grep -m1 -E '^\[plugins\..*containerd\.runtimes\.runc\]$' "$CONTAINERD_CONFIG" || true)"
+    if [[ -z $runc_header ]]; then
+        die "could not find the runc runtime block in $CONTAINERD_CONFIG to model runsc on"
+    fi
+    runsc_header="${runc_header/runtimes.runc]/runtimes.runsc]}"
+
+    log "registering runsc via $dropin_dir/$DROPIN_NAME"
+    mkdir -p "$dropin_dir"
+    cat >"$dropin_dir/$DROPIN_NAME" <<EOF
+# Managed by deploy/kubernetes/gvisor-k3s.sh — the gVisor runtime handler for
+# ProteOS machine pods. Merged into k3s's generated containerd config through the
+# imports glob; k3s does not overwrite this file.
+$runsc_header
+  runtime_type = "io.containerd.runsc.v1"
+EOF
+}
+
 # --- 2. containerd ----------------------------------------------------------
-# k3s rewrites its containerd config from a template on every start and, since
-# v1.30, detects runtimes that are already on PATH and registers a handler for
-# them. So the install order matters: runsc first, restart second.
-if grep -q 'runsc' "$CONTAINERD_CONFIG" 2>/dev/null; then
+# k3s rewrites its containerd config from a template on every start and detects
+# some runtimes on PATH by itself, so the install order matters: runsc first,
+# restart second. Auto-detection is not guaranteed for every release/runtime
+# combination, so a drop-in is written when the restart alone does not do it.
+UNIT="$(k3s_unit)" || die "neither k3s nor k3s-agent is running on this node"
+
+has_runsc() { grep -rq 'runsc' "$CONTAINERD_CONFIG" "$(dirname "$CONTAINERD_CONFIG")"/*.d/ 2>/dev/null; }
+
+if has_runsc; then
     ok "k3s containerd already has a runsc handler"
 elif [[ $CHECK_ONLY -eq 1 ]]; then
-    die "k3s containerd has no runsc handler (restart k3s after installing runsc)"
+    die "k3s containerd has no runsc handler (re-run without --check to register it)"
 else
-    log "restarting k3s so it re-detects the runtime"
-    systemctl restart k3s
+    log "restarting $UNIT so it re-detects the runtime"
+    systemctl restart "$UNIT"
     for _ in $(seq 1 30); do
-        grep -q 'runsc' "$CONTAINERD_CONFIG" 2>/dev/null && break
+        has_runsc && break
         sleep 2
     done
-    if ! grep -q 'runsc' "$CONTAINERD_CONFIG" 2>/dev/null; then
-        cat >&2 <<'MSG'
-Older k3s releases do not auto-detect runtimes. Register one explicitly rather
-than letting this script guess a config template for your version: a wrong
-containerd template takes the whole node's containerd down, not just gVisor.
-
-  https://docs.k3s.io/advanced#configuring-containerd
-
-Seed a config template from the generated config.toml named above, append a
-runsc runtime to it, restart k3s, then re-run this script.
-MSG
-        die "k3s did not register a runsc runtime after a restart"
+    if ! has_runsc; then
+        log "k3s did not pick the runtime up on its own; registering it explicitly"
+        write_dropin
+        systemctl restart "$UNIT"
     fi
-    ok "k3s containerd registered the runsc handler"
+    for _ in $(seq 1 30); do
+        has_runsc && break
+        sleep 2
+    done
+    has_runsc || die "runsc is still not registered in containerd after a restart"
+    ok "containerd has a runsc handler"
 fi
 
+# Wait for the kubelet to come back before anything below asks the API server
+# about this node; a restart takes it NotReady for a few seconds.
+for _ in $(seq 1 60); do
+    systemctl is-active --quiet "$UNIT" && break
+    sleep 2
+done
+
 # --- 3. the RuntimeClass ----------------------------------------------------
-# The object that lets a pod ASK for the handler. Applying it is part of the
-# k3s overlay; this only reports, so the script stays a node-level concern.
-if kubectl get runtimeclass gvisor >/dev/null 2>&1; then
+# The object that lets a pod ASK for the handler. Applying it is part of the k3s
+# overlay; this only reports, so the script stays a node-level concern. An agent
+# node has no API access at all, which is not a problem to report — the check
+# simply belongs somewhere else.
+if ! command -v kubectl >/dev/null || ! kubectl get nodes >/dev/null 2>&1; then
+    log "no cluster access from this node; check the RuntimeClass from wherever you run kubectl:"
+    log "    kubectl get runtimeclass gvisor"
+elif kubectl get runtimeclass gvisor >/dev/null 2>&1; then
     ok "RuntimeClass/gvisor exists"
 else
     log "RuntimeClass/gvisor not found — apply it with:"
@@ -102,20 +169,36 @@ else
 fi
 
 # --- 4. prove it actually sandboxes -----------------------------------------
-# The only assertion that matters: a pod asking for this RuntimeClass really
-# runs under a gVisor kernel rather than the node's. A RuntimeClass naming a
-# broken handler leaves pods Pending or, worse, silently falls back — so check
-# from inside a sandbox rather than trusting the config.
-if [[ $CHECK_ONLY -eq 0 ]] && kubectl get runtimeclass gvisor >/dev/null 2>&1; then
-    log "smoke-testing a sandboxed pod"
+# The only assertion that matters: a pod asking for this RuntimeClass really runs
+# under a gVisor kernel rather than the node's. A RuntimeClass naming a handler
+# the node does not have leaves pods Pending or failing to start, so check from
+# inside a sandbox rather than trusting the config.
+#
+# PINNED TO THIS NODE, which is the whole point: this script installs a runtime on
+# ONE node, and a cluster is very likely to be mixed while it is being rolled out.
+# An unpinned pod tests whichever node the scheduler picks — on the first run of
+# this script against a three-node cluster it landed on the one node without
+# runsc and reported failure for a node that was, in fact, fine.
+NODE="$(hostname)"
+if [[ $CHECK_ONLY -eq 0 ]] && command -v kubectl >/dev/null && kubectl get runtimeclass gvisor >/dev/null 2>&1; then
+    log "smoke-testing a sandboxed pod on $NODE"
     kubectl delete pod gvisor-smoke --ignore-not-found >/dev/null 2>&1 || true
     if kubectl run gvisor-smoke --rm -i --restart=Never --image=busybox:1.36 \
-        --overrides='{"spec":{"runtimeClassName":"gvisor"}}' -- dmesg 2>/dev/null |
-        grep -qi 'gvisor'; then
-        ok "a pod with runtimeClassName: gvisor runs under gVisor"
+        --overrides="{\"spec\":{\"runtimeClassName\":\"gvisor\",\"nodeSelector\":{\"kubernetes.io/hostname\":\"$NODE\"}}}" \
+        -- dmesg 2>/dev/null | grep -qi 'gvisor'; then
+        ok "a pod with runtimeClassName: gvisor runs under gVisor on $NODE"
     else
-        die "the smoke pod did not report a gVisor kernel — machines would run on the node's kernel"
+        die "the smoke pod did not report a gVisor kernel — machines would run on this node's kernel
+(if it stayed Pending, this node's Kubernetes name may not be \"$NODE\")"
     fi
 fi
+
+# --- 5. let the scheduler know ----------------------------------------------
+# A machine pod may only be scheduled where the runtime actually exists. The
+# RuntimeClass carries a nodeSelector for that (see the k3s overlay), so a node
+# has to advertise itself — otherwise machines land on a node without runsc and
+# fail to start, which reads as a broken machine rather than an un-rolled-out one.
+log "label this node so machine pods may be scheduled to it:"
+log "    kubectl label node $NODE proteos.io/sandbox=gvisor --overwrite"
 
 ok "this node can run sandboxed machine pods"
