@@ -185,6 +185,19 @@ hibernate; it must match the agent's own `PROTEOS_AGENT_DRIVER`. If the cluster
 is the control plane's *only* host, set `PROTEOS_HOST_DRIVER=kubernetes` for the
 primary host row instead.
 
+## Image tags
+
+The cluster-agent Deployment tracks `latest` and therefore pulls `Always`.
+Machine pods do the opposite: the driver sets `IfNotPresent`, so a guest image is
+pulled once per node and every later machine starts from the local copy — which
+is most of why a machine boots in seconds rather than minutes.
+
+That makes the template's `image_ref` a promise: **point it at an immutable tag
+or a digest**. A moving tag pinned by `IfNotPresent` means a node keeps starting
+machines from whatever it cached first, indefinitely and invisibly, while another
+node runs something newer. `ghcr.io/tavon-ai/proteos-guest:base-1.2.3` or
+`...proteos-guest@sha256:…`, never `:latest`.
+
 ## Giving it something to boot
 
 A machine is only placed on a host whose backend its template can boot, so a
