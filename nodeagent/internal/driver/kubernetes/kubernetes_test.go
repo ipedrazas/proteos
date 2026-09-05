@@ -282,6 +282,39 @@ func TestSSHDialRefusedUntilSSHDIsReady(t *testing.T) {
 	}
 }
 
+// A machine's usage is the shape it was created with, whatever its pod requests
+// say. The two diverge by design — CPURequestRatio scales requests down to fit a
+// machine on a small node, and the sshd sidecar adds a slice of its own — and
+// the control plane is asking the first question, not the second. Both wrong
+// answers have been shipped: a 1-vcpu machine reported as 2, then as 0 on a
+// cluster configured to oversubscribe.
+func TestCapacityUsesDeclaredShapesNotPodRequests(t *testing.T) {
+	d, cluster := newDriver(t, 0)
+	ctx := context.Background()
+	const id = "aaaaaaaa-0000-4000-8000-00000000000d"
+
+	// One vcpu, and a driver that requests a tenth of one for it.
+	oversubscribed := k8s.New(cluster, k8s.Config{
+		Namespace:       testNamespace,
+		CPURequestRatio: 0.1,
+		CapacityTTL:     time.Nanosecond,
+	})
+	s := spec(id)
+	s.Vcpus, s.MemMiB = 1, 1024
+	if _, err := oversubscribed.EnsureRunning(ctx, s); err != nil {
+		t.Fatalf("EnsureRunning: %v", err)
+	}
+
+	cap, err := d.Capacity(ctx)
+	if err != nil {
+		t.Fatalf("Capacity: %v", err)
+	}
+	if cap.UsedVcpus != 1 || cap.UsedMemMiB != 1024 {
+		t.Errorf("used = %d vcpus / %d MiB, want the declared 1 / 1024 (requests would say 0 / 1088)",
+			cap.UsedVcpus, cap.UsedMemMiB)
+	}
+}
+
 // The readiness probe must not be an httpGet. The kubelet performs those from
 // the node's address, so the machine's NetworkPolicy — whose whole job is to
 // permit exactly one ingress peer on the guest ports — would have to permit a
@@ -664,11 +697,11 @@ func TestCapacityCountsSchedulableNodesOnly(t *testing.T) {
 	if cap.TotalMemMiB != 32768 {
 		t.Errorf("total mem = %d MiB, want 32768", cap.TotalMemMiB)
 	}
-	// The machine's declared 2 vcpus, plus the sshd sidecar's 64Mi. The sidecar's
-	// 50m of CPU is absorbed by rounding the cluster total to the nearest vcpu —
-	// counting it per container would report this machine as using 3.
-	if cap.UsedVcpus != 2 || cap.UsedMemMiB != 2048+64 {
-		t.Errorf("used = %d vcpus / %d MiB, want 2 / %d", cap.UsedVcpus, cap.UsedMemMiB, 2048+64)
+	// The shape the machine was created with, not the sum of its pod's requests:
+	// those carry the CPU oversubscription ratio and the sshd sidecar's fixed
+	// slice, neither of which the control plane asked for or reasons about.
+	if cap.UsedVcpus != 2 || cap.UsedMemMiB != 2048 {
+		t.Errorf("used = %d vcpus / %d MiB, want the machine's declared 2 / 2048", cap.UsedVcpus, cap.UsedMemMiB)
 	}
 	if cap.UsedDiskMiB != 20480 {
 		t.Errorf("used disk = %d MiB, want 20480 (the machine's PVC)", cap.UsedDiskMiB)

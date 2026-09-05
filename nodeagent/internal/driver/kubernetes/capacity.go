@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -17,8 +18,8 @@ import (
 // Firecracker boxes without knowing the difference.
 //
 // Total is the sum of allocatable cpu/memory over the schedulable nodes that
-// match the machine node selector; Used is the sum of what this driver's own
-// machines request. That is deliberately an approximation: it ignores
+// match the machine node selector; Used is the sum of the shapes this driver's
+// own machines were created with. That is deliberately an approximation: it ignores
 // fragmentation (four free cores spread over four nodes will not fit a 4-vcpu
 // machine) and it ignores everything else running on those nodes. It only has
 // to be good enough to RANK hosts — Kubernetes, not the control plane, decides
@@ -66,27 +67,40 @@ func (d *Driver) Capacity(ctx context.Context) (driver.Capacity, error) {
 	if err != nil {
 		return driver.Capacity{}, fmt.Errorf("list machine pods: %w", err)
 	}
-	// CPU is accumulated in milli and converted ONCE, at the end. Quantity.Value()
-	// rounds a fractional core UP to a whole one, so summing it per container
-	// counted the sshd sidecar's 50m as a full vcpu and reported a 1-vcpu machine
-	// as using 2. Rounding the cluster-wide total to the nearest vcpu instead
-	// keeps a machine's reported usage equal to its declared shape, with the
-	// sidecar's fixed overhead absorbed rather than multiplied by the fleet size.
-	// Memory needs none of this: bytes convert to MiB exactly, so the sidecar's
-	// 64Mi is simply counted, which is what it actually consumes.
-	var usedMilliCPU int64
+	// Used is the sum of the machines' DECLARED shapes, read back off the pod
+	// annotations, not of their Kubernetes resource requests.
+	//
+	// A request is how this driver gets a machine scheduled, and it is
+	// deliberately not the machine's shape: CPURequestRatio scales it down so a
+	// machine fits a small node, and the sshd sidecar adds a fixed slice of its
+	// own. Summing requests therefore answers a question the control plane never
+	// asked. It reported a 1-vcpu machine as using 2 (Quantity.Value() rounds a
+	// fractional core up, so the sidecar's 50m counted as a whole one) and then,
+	// once that was fixed by accumulating milli, as using 0 on a cluster
+	// configured to oversubscribe. Both are wrong in the way that matters: the
+	// control plane is asking how much of this cluster its machines have been
+	// promised, and that is what it asked for when it created them.
+	//
+	// A pod without readable annotations falls back to its requests, so a
+	// hand-made or half-migrated pod still counts for something.
+	var fallbackMilliCPU int64
 	for i := range pods.Items {
 		pod := &pods.Items[i]
 		if terminal(pod.Status.Phase) {
 			continue
 		}
+		if vcpus, memMiB, ok := declaredShape(pod); ok {
+			cap.UsedVcpus += vcpus
+			cap.UsedMemMiB += memMiB
+			continue
+		}
 		for j := range pod.Spec.Containers {
 			req := pod.Spec.Containers[j].Resources.Requests
-			usedMilliCPU += req.Cpu().MilliValue()
+			fallbackMilliCPU += req.Cpu().MilliValue()
 			cap.UsedMemMiB += int(req.Memory().Value() / (1024 * 1024))
 		}
 	}
-	cap.UsedVcpus = int((usedMilliCPU + 500) / 1000)
+	cap.UsedVcpus += int((fallbackMilliCPU + 500) / 1000)
 
 	// Disk: a machine holds its PVC until Destroy, exactly like the firecracker
 	// driver's volume file, so every claim counts — running or not.
@@ -105,6 +119,23 @@ func (d *Driver) Capacity(ctx context.Context) (driver.Capacity, error) {
 	d.capCache, d.capAt = cap, time.Now()
 	d.mu.Unlock()
 	return cap, nil
+}
+
+// declaredShape reads the vcpus/memory the control plane asked for off a machine
+// pod's annotations — the same values EnsureRunning wrote there, which is why
+// this driver needs no local state. Reports ok=false unless both are present and
+// positive, so a malformed annotation falls back to requests rather than
+// silently counting a machine as zero.
+func declaredShape(pod *corev1.Pod) (vcpus, memMiB int, ok bool) {
+	vcpus, err := strconv.Atoi(pod.Annotations[VcpusAnnotation])
+	if err != nil || vcpus <= 0 {
+		return 0, 0, false
+	}
+	memMiB, err = strconv.Atoi(pod.Annotations[MemMiBAnnotation])
+	if err != nil || memMiB <= 0 {
+		return 0, 0, false
+	}
+	return vcpus, memMiB, true
 }
 
 // schedulable rejects cordoned nodes and nodes the kubelet has not reported
