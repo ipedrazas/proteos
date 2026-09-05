@@ -3,8 +3,8 @@
 > Source: request to "delegate the execution of a remote agent to a Kubernetes
 > cluster" (2026-09-04). Feature work off the master-plan numbering, like
 > `port-preview` and `multi-machine`; stages labelled **K0–K6**.
-> Status: **K0–K3 implemented** (2026-09-04); K0–K2 verified against a real
-> cluster via the kind e2e job. K4–K6 not started. With K3 the control plane can
+> Status: **K0–K4 implemented** (K4: 2026-09-05); K0–K2 and K4 verified against a
+> real cluster via the kind e2e job. K5–K6 not started. With K3 the control plane can
 > place a machine on a cluster host on its own — before it, a machine could only
 > be created there by driving the agent directly. See "Implementation notes" at
 > the end for where the build departed from this plan, and "What the kind e2e
@@ -360,6 +360,9 @@ domain resolution reuse), `guest.go` (`DialGuest`), `capacity.go`.
 
 ### K4 — SSH, previews, code-server, docs
 
+> Landed 2026-09-05. See the K4 implementation notes below.
+
+
 - **SSH**: add a second container `sshd` to the machine pod (same image, command
   `sshd -D -e`, shares the PVC for `~/.ssh/authorized_keys` and the pod netns);
   set `PROTEOS_GUEST_SSH_LISTEN=tcp:0.0.0.0:1027` so `sshfwd` dials
@@ -569,12 +572,80 @@ and the admin fleet table. Config: `PROTEOS_HOST_DRIVER`, `"driver"` in
    cluster host by following `deploy/kubernetes/README.md` would have done
    nothing on the shipped stack.
 
-### Still open before this is usable end to end
+## Implementation notes (K4, 2026-09-05)
 
-- **K4** — the sshd sidecar, and code-server verified against a real cluster
-  (the preview forward already is).
+The sshd sidecar, code-server verified against a real pod, a k3s overlay with
+gVisor, and the operator docs (README quickstart, RUNBOOK Part K, SECURITY.md's
+SSH row, the DEPLOYMENT.md topology entry).
+
+### Departures from the plan
+
+1. **The plan's `PROTEOS_GUEST_SSH_LISTEN` line was the easy half.** What it did
+   not mention is that three things resolve `~` for the session user and they
+   must agree: the guest agent starts sessions in the persisted home, the
+   injector writes `authorized_keys` there, and sshd reads `$HOME` and
+   `AuthorizedKeysFile` from the PASSWD entry. The ext4 image aligns them with a
+   bind mount, which needs a mount namespace this backend does not have, so the
+   image sets the `dev` user's passwd home to `/persist/home` instead.
+2. **The injector was already writing to the wrong home** (fixed here, in
+   guestagent): sessions used the persisted home but the secrets store used the
+   OS user's, so on this backend a pushed profile file had been landing in a
+   directory that dies with the container and that no session's `$HOME` pointed
+   at. Invisible until SSH made it fatal.
+3. **`UsePAM yes`, not `no`.** With PAM off, sshd runs its own locked-account
+   check and refuses every login — public key included — for an account whose
+   shadow password starts with `!`, which is every account `useradd` creates.
+   `pam_loginuid` is made optional, for the reason it is optional in every
+   container.
+4. **Host keys are deleted from the image at build time.** `openssh-server`'s
+   postinst generates them; baked in, every machine from that image would share
+   one identity and any machine could impersonate any other to a client that
+   pinned the fingerprint.
+5. **A machine is running when its GUEST is ready, and the ssh dial waits
+   separately.** Gating "running" on the whole pod would make a machine with a
+   broken sshd entirely unusable — no terminal — for a feature many users never
+   touch. Instead `DialGuest` answers the ssh port with "sshd is not ready yet"
+   during the window where a first boot is still generating host keys.
+6. **`Capacity.Used` now comes from the machines' declared shapes**, not their
+   pod requests. A request carries `CPURequestRatio` and the sidecar's slice,
+   neither of which the control plane asked for; summing them reported a 1-vcpu
+   machine as 2, and then (after the rounding was fixed) as 0 on a cluster
+   configured to oversubscribe.
+
+### What the kind e2e found this time
+
+Everything above from 5 onward, plus two tests that were lying to themselves in
+new ways — worth recording because the file already carried a warning about the
+first kind:
+
+1. **A PTY echo passed for a host key fingerprint.** The command printed a tag it
+   also contained, so the parser matched the echo of the awk program: the
+   before/after comparison was the command against itself and would have stayed
+   green through any host-key regression. This is exactly what `echoMarker`
+   exists to prevent, one file over.
+2. **The fingerprint could not be read from the volume at all.** The host key
+   directory is root-only (private keys live there) and sessions are
+   unprivileged. Asking sshd what it presents (`ssh-keyscan`) is both permitted
+   and the stronger assertion.
+3. **The image verify script probed with `sh`**, whose `/bin/sh` is dash, which
+   has no `/dev/tcp` — it reported "sshd never listened" against a healthy
+   daemon.
+
+The fake clientset also had to grow the sshd container's status: modelling one
+container made every simulated machine look like one whose sshd never came up.
+That is the third time this backend's fake has been confidently wrong about
+something a real cluster settles immediately.
+
+### Still open before this is usable end to end
 - **Isolation is still unverified.** kind has no gVisor, so the e2e runs with no
   RuntimeClass and proves only that the driver drives Kubernetes correctly. That
   a sandboxed runtime actually contains a machine, and that a policy-enforcing
   CNI actually blocks pod-to-machine traffic, are both untested — and they are
   the two assumptions the whole security model rests on (K5).
+  `deploy/kubernetes/gvisor-k3s.sh` installs the runtime and smoke-tests that a
+  pod really runs under a gVisor kernel, but it has not itself been run on a
+  cluster yet.
+- **No control plane drives the cluster in CI.** The kind job talks to the
+  cluster-agent directly, so the K3 placement path and the machineweb preview
+  proxy (with its port allowlist) are still only covered by unit tests. Standing
+  a control plane up in the kind job would close both gaps at once.
