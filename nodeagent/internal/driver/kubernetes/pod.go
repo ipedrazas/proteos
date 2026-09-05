@@ -71,9 +71,20 @@ func (d *Driver) ensurePVC(ctx context.Context, spec driver.VMSpec) error {
 	name := pvcName(spec.MachineID)
 	pvcs := d.client.CoreV1().PersistentVolumeClaims(d.cfg.Namespace)
 
-	if _, err := pvcs.Get(ctx, name, metav1.GetOptions{}); err == nil {
+	switch existing, err := pvcs.Get(ctx, name, metav1.GetOptions{}); {
+	case err == nil && terminating(existing.ObjectMeta):
+		// A destroyed volume stays visible while the pvc-protection finalizer is
+		// held — which is until the pod that mounted it is gone. Treating it as
+		// present would skip creating the replacement, and the pod would then
+		// reference a claim that is being deleted and stay Pending for ever.
+		if err := d.waitGone(ctx, "pvc "+name, func(ctx context.Context) (bool, error) {
+			return d.pvcPresent(ctx, name)
+		}); err != nil {
+			return err
+		}
+	case err == nil:
 		return nil
-	} else if !apierrors.IsNotFound(err) {
+	case !apierrors.IsNotFound(err):
 		return fmt.Errorf("get pvc %s: %w", name, err)
 	}
 

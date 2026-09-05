@@ -199,6 +199,22 @@ func (c *Cluster) scheduleLater(namespace, name, ip string, failed bool) {
 	}()
 }
 
+// Terminating marks a machine pod as deleted-but-still-visible: the state a real
+// pod occupies for its whole termination grace period, and a PVC for as long as
+// the pvc-protection finalizer is held. The fake clientset deletes instantly and
+// honours no finalizers, so without this it cannot represent the window in which
+// a machine is being replaced — the window that hid a bug where EnsureRunning
+// adopted a dying pod and created nothing.
+func (c *Cluster) Terminating(namespace, name string) error {
+	pod, err := c.client.CoreV1().Pods(namespace).Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	now := metav1.Now()
+	pod.DeletionTimestamp = &now
+	return c.client.Tracker().Update(podsGVR, pod, namespace)
+}
+
 // CrashLoop puts a running machine pod into CrashLoopBackOff, so the driver's
 // "a pod that is Running but broken is an error, not creating" mapping can be
 // tested against a real object rather than a hand-built struct.
