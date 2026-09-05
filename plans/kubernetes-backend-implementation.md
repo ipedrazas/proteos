@@ -725,6 +725,19 @@ drop dm-crypt. Verified against a fresh kind cluster: the probe passed, all six
 driver tests and both control-plane tests ran through the authenticated
 listeners, and the leak check (now including Secrets and the canary) was clean.
 
+Then against the three-node k3s v1.36 cluster with gVisor and kube-router, with
+the branch's images imported into `k3s ctr` and the cluster-agent rolled to
+them: the probe verified enforcement there too, the same eight tests passed with
+every machine on a `4.19.0-gvisor` kernel, and the second control was
+demonstrated with a control of its own — a machine's ingress policy was opened
+to every namespace, and from an unrelated pod a connection with no preamble was
+closed, one with a wrong token was closed (both logged by the guest), and one
+with the machine's token got `HTTP/1.0 200 OK`. The cluster was rolled back to
+the published agent afterwards: the published guest image predates the
+preamble, and a K5 agent would start machines from it that never become ready
+(the readiness probe presents a token the guest does not expect). The two ship
+together; `PROTEOS_K8S_GUEST_AUTH=0` is the bridge for a fleet that cannot.
+
 ### Departures from the plan
 
 1. **The probe is an experiment, not an inspection.** The plan said "create a
