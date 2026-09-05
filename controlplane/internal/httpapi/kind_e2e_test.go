@@ -345,6 +345,14 @@ func TestKindControlPlanePreview(t *testing.T) {
 	// 3. The agent's allowlist: the control plane admits 9000 (default range),
 	// the agent refuses to tunnel to it, and the proxy reports that rather than
 	// the app's body. This is the layering the plan asked to see end to end.
+	//
+	// Only where the agent's range IS narrowed — the kind overlay does that; a
+	// production-shaped cluster running the shipped defaults admits 9000 too, and
+	// this suite is also run against one of those.
+	if os.Getenv("PROTEOS_E2E_AGENT_PREVIEW_NARROWED") == "0" {
+		t.Log("agent preview range not narrowed on this cluster; skipping the agent-allowlist step")
+		return
+	}
 	code, _ := mintPreview(t, fx, kindAgentPreviewOut)
 	if code != http.StatusOK {
 		t.Fatalf("mint for port %d = %d, want 200 (the control plane's default range admits it)", kindAgentPreviewOut, code)
