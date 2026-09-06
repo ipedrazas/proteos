@@ -1,0 +1,30 @@
+# For CILIUM clusters only — not applied by kustomization.yaml (the CRD does not
+# exist elsewhere). Apply it alongside the base on any cluster whose CNI is
+# Cilium, FQDN engine or not:
+#
+#   kubectl apply -f deploy/kubernetes/base/networkpolicy-cilium.yaml
+#
+# Why it exists. The cluster-agent's own NetworkPolicy permits egress to the
+# API server with an ipBlock (base/networkpolicy.yaml) — the only way a
+# Kubernetes NetworkPolicy can name an address outside the pod network. Cilium
+# does not match ipBlock/CIDR rules against traffic to the cluster's OWN nodes:
+# the API server carries the `host` / `kube-apiserver` identity, which only a
+# CiliumNetworkPolicy's `toEntities` can name. Without this object the agent's
+# very first API call is dropped ("Policy denied … ->host … :6443" in `cilium
+# monitor --type drop`), its preflight never completes, the pod never becomes
+# ready, and nothing in its own log says why — which is exactly how the first
+# Cilium e2e run failed. Cilium unions this with the NetworkPolicy; nothing
+# else about the agent's policy changes.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: proteos-cluster-agent-apiserver
+  namespace: proteos-system
+  labels:
+    app.kubernetes.io/part-of: proteos
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: proteos-cluster-agent
+  egress:
+    - toEntities: [kube-apiserver]

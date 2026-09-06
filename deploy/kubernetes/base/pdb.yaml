@@ -1,0 +1,21 @@
+# Keeps a node drain from taking every cluster-agent replica at once (K6).
+#
+# maxUnavailable rather than minAvailable, on purpose: with the base's single
+# replica, minAvailable: 1 would make the agent's pod undrainable and block
+# every node maintenance on the cluster, for a component whose restart costs
+# nothing (the API server holds the state and machines keep running). With two
+# replicas, maxUnavailable: 1 means a drain moves them one at a time and the
+# control plane never sees the host go away.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: proteos-cluster-agent
+  namespace: proteos-system
+  labels:
+    app.kubernetes.io/name: proteos-cluster-agent
+    app.kubernetes.io/part-of: proteos
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: proteos-cluster-agent

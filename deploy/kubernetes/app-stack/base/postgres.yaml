@@ -1,0 +1,84 @@
+# Postgres, as compose.yaml runs it: one instance, a persistent volume, the
+# credentials from the app stack's Secret. A StatefulSet rather than a
+# Deployment so the volume follows the one pod by name and a rollout can never
+# start a second Postgres against the same data directory.
+apiVersion: v1
+kind: Service
+metadata:
+  name: proteos-postgres
+  labels:
+    app.kubernetes.io/name: proteos-postgres
+spec:
+  clusterIP: None # headless: the StatefulSet's stable name is the point
+  selector:
+    app.kubernetes.io/name: proteos-postgres
+  ports:
+    - name: postgres
+      port: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: proteos-postgres
+  labels:
+    app.kubernetes.io/name: proteos-postgres
+spec:
+  serviceName: proteos-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: proteos-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: proteos-postgres
+    spec:
+      securityContext:
+        fsGroup: 999 # the postgres image's user, so the volume is writable
+      containers:
+        - name: postgres
+          image: postgres:16
+          env:
+            - name: POSTGRES_USER
+              value: proteos
+            - name: POSTGRES_DB
+              value: proteos
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: proteos-controlplane
+                  key: POSTGRES_PASSWORD
+            # Off the volume root: Postgres refuses a data directory that is a
+            # mount point with lost+found in it.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, proteos, -d, proteos]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: [pg_isready, -U, proteos, -d, proteos]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: [ReadWriteOnce]
+        # storageClassName: set in your overlay; the cluster default otherwise.
+        resources:
+          requests:
+            storage: 10Gi

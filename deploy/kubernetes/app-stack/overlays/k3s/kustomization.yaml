@@ -1,0 +1,36 @@
+# The app stack on a self-hosted k3s cluster: the web Service as a LoadBalancer
+# (klipper or MetalLB hands it an address), and the site's own values merged
+# over controlplane.env. Copy this overlay and change the values; the base is
+# not meant to be applied as it is.
+#
+#   kubectl apply -k deploy/kubernetes/app-stack/overlays/k3s/
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+configMapGenerator:
+  - name: proteos-controlplane
+    behavior: merge
+    literals:
+      # The address users open: the LoadBalancer's, or the name pointing at it.
+      - PROTEOS_BASE_URL=http://192.0.2.10
+      # The guest image machines boot. Immutable tag or digest.
+      - PROTEOS_IMAGE_REF=ghcr.io/tavon-ai/proteos-guest:base-CHANGE_ME
+
+patches:
+  - target:
+      kind: Service
+      name: proteos-web
+    patch: |
+      - op: replace
+        path: /spec/type
+        value: LoadBalancer
+
+# Pin the app images here (compose.yaml's PROTEOS_VERSION), e.g. a commit tag:
+# images:
+#   - name: ghcr.io/tavon-ai/proteos-api
+#     newTag: sha-abc1234
+#   - name: ghcr.io/tavon-ai/proteos-ui
+#     newTag: sha-abc1234

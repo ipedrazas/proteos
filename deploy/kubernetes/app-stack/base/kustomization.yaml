@@ -1,0 +1,64 @@
+# The ProteOS app stack — Postgres, OpenBao, the control plane and the web
+# front end — inside the cluster that also runs the cluster-agent (K6).
+#
+# This is deploy/app-stack/compose.yaml expressed as Kubernetes objects, with
+# the same images and the same environment; the differences are the ones the
+# platform forces (a PVC where compose had a named volume, a Service where it
+# had a network alias) and one it makes possible: the control plane dials the
+# cluster-agent by its Service name over the pod network, pinning the SAME
+# certificate the agent already holds, so nothing needs a LoadBalancer for the
+# agent any more.
+#
+# It lives in proteos-system next to the cluster-agent, deliberately: both are
+# the trusted side of the deployment (API-server credentials on one, user
+# secrets and the database on the other), and machines stay in their own
+# namespace with their own default-deny. Prerequisites:
+#
+#   - the cluster-agent (deploy/kubernetes/base or an overlay) applied first —
+#     the control plane reads the agent's token and certificate from ITS Secret
+#     (proteos-cluster-agent), so the two never disagree;
+#   - the Secret proteos-controlplane (see README.md: database password, state
+#     key, the IdP and GitHub App credentials);
+#   - a ConfigMap patch for the site-specific values in controlplane.env.
+#
+#   kubectl apply -k deploy/kubernetes/app-stack/overlays/k3s/
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: proteos-system
+
+resources:
+  - postgres.yaml
+  - openbao.yaml
+  - controlplane.yaml
+  - web.yaml
+  - networkpolicy.yaml
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: proteos
+
+configMapGenerator:
+  # Every non-secret control-plane setting, one place. Override per site with a
+  # `behavior: merge` generator in your overlay (overlays/k3s shows how) —
+  # PROTEOS_BASE_URL and PROTEOS_IMAGE_REF at the very least.
+  - name: proteos-controlplane
+    envs:
+      - controlplane.env
+  # The machine-template catalog, mounted at /etc/proteos/templates.json and
+  # activated by PROTEOS_TEMPLATES_FILE (empty by default ⇒ the single "base"
+  # template synthesized from PROTEOS_IMAGE_REF). Replace the file in your
+  # overlay with a real catalog.
+  - name: proteos-templates
+    files:
+      - templates.json
+
+# Pin these in your overlay. `latest` is here so the base applies at all, and
+# for the same reason compose.yaml refuses it: a deploy of "latest" is not
+# reproducible and cannot be rolled back by name. See DEPLOYMENT.md.
+images:
+  - name: ghcr.io/tavon-ai/proteos-api
+    newTag: latest
+  - name: ghcr.io/tavon-ai/proteos-ui
+    newTag: latest

@@ -1,0 +1,175 @@
+# The control plane. One replica, on purpose — the reasons are compose.yaml's:
+# the poller, the SSE/task-event broker, the gateway's WebSocket registry and
+# the per-process rate limiter are in-memory and not shared, so a permanent
+# second replica would duplicate secret pushes and drop live updates for
+# clients pinned to the other one. The rollout strategy below is DEPLOYMENT.md's
+# "rolling deploy" made automatic: a second pod on the new image comes up
+# beside the old one, migrates (golang-migrate's advisory lock makes that safe
+# for both), goes ready, and only then does the old one go.
+apiVersion: v1
+kind: Service
+metadata:
+  name: proteos-controlplane
+  labels:
+    app.kubernetes.io/name: proteos-controlplane
+spec:
+  selector:
+    app.kubernetes.io/name: proteos-controlplane
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+# Where the compose stack had the `cpdata` volume: the file-backed secrets store
+# (until OpenBao is initialized) and the session exports the K6 sketch called
+# out — Destroy writes a machine's Claude session to the control plane's own
+# filesystem (TAV-141), which in a pod would otherwise vanish with the pod.
+# ReadWriteOnce is enough because the rolling update keeps both pods on one
+# node only if the volume lets it; on a node-local StorageClass the new pod
+# lands beside the old one, on a network one wherever it likes.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: proteos-controlplane-data
+  labels:
+    app.kubernetes.io/name: proteos-controlplane
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proteos-controlplane
+  labels:
+    app.kubernetes.io/name: proteos-controlplane
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: proteos-controlplane
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: proteos-controlplane
+    spec:
+      # The image runs as root (controlplane.Dockerfile: the secrets file lives
+      # on the data volume, which it must be able to create), so no fsGroup
+      # dance is needed; the volume is simply writable.
+      #
+      # On a first apply this pod restarts once or twice before Postgres
+      # accepts connections (compose had depends_on: service_healthy; here the
+      # kubelet's restart backoff is that wait). Expected, and over in under a
+      # minute; a pod still crash-looping after that is misconfigured — read
+      # its log.
+      containers:
+        - name: controlplane
+          image: ghcr.io/tavon-ai/proteos-api:latest
+          # The image's entrypoint already passes -migrate.
+          envFrom:
+            - configMapRef:
+                name: proteos-controlplane
+          env:
+            # Secrets, one key each, from the Secret the README creates.
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: proteos-controlplane
+                  key: POSTGRES_PASSWORD
+            # $(VAR) is the kubelet's own dependent-variable expansion, so the
+            # password is typed once, in the Secret.
+            - name: DATABASE_URL
+              value: postgres://proteos:$(POSTGRES_PASSWORD)@proteos-postgres:5432/proteos?sslmode=disable
+            - name: PROTEOS_STATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: proteos-controlplane
+                  key: PROTEOS_STATE_KEY
+            - name: ZITADEL_DOMAIN
+              valueFrom:
+                secretKeyRef: {name: proteos-controlplane, key: ZITADEL_DOMAIN, optional: true}
+            - name: ZITADEL_CLIENT_ID
+              valueFrom:
+                secretKeyRef: {name: proteos-controlplane, key: ZITADEL_CLIENT_ID, optional: true}
+            - name: GITHUB_APP_CLIENT_ID
+              valueFrom:
+                secretKeyRef: {name: proteos-controlplane, key: GITHUB_APP_CLIENT_ID, optional: true}
+            - name: GITHUB_APP_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: {name: proteos-controlplane, key: GITHUB_APP_CLIENT_SECRET, optional: true}
+            # The cluster-agent's bearer token, from the AGENT's Secret: the
+            # control plane and the agent read the same bytes, so the two
+            # cannot disagree the way two copies of a token in two .env files
+            # can.
+            - name: PROTEOS_AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: proteos-cluster-agent
+                  key: PROTEOS_AGENT_TOKEN
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/proteos
+            # The agent's certificate, pinned (PROTEOS_NODE_CA_FILE in
+            # controlplane.env), again straight from the agent's Secret.
+            - name: node-agent-ca
+              mountPath: /etc/proteos/node-agent-ca.pem
+              subPath: tls.crt
+              readOnly: true
+            - name: templates
+              mountPath: /etc/proteos/templates.json
+              subPath: templates.json
+              readOnly: true
+            # The OpenBao AppRole secret_id, written by openbao-init.sh into
+            # this Secret; absent (and unread) on the file backend.
+            - name: openbao-secret-id
+              mountPath: /run/secrets/openbao
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: proteos-controlplane-data
+        - name: node-agent-ca
+          secret:
+            secretName: proteos-cluster-agent
+            items:
+              - key: tls.crt
+                path: tls.crt
+        - name: templates
+          configMap:
+            name: proteos-templates
+        - name: openbao-secret-id
+          secret:
+            secretName: proteos-openbao-approle
+            optional: true

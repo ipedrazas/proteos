@@ -1,0 +1,133 @@
+# Who may talk to whom inside the app stack. The machine namespace has its own
+# default-deny (base/networkpolicy.yaml) and machines can never reach any of
+# these; this file is about the trusted side keeping its own doors narrow.
+#
+# Postgres and OpenBao accept the control plane and nothing else — not the web
+# pod, not the cluster-agent, not a debug pod. The control plane accepts its
+# port from anywhere in the cluster (the web pod, and the kubelet's probes,
+# whose source address no portable policy can name) and may reach only the
+# database, OpenBao, the cluster-agent, DNS, and the internet on 443 (the IdP,
+# GitHub, git hosts). The cluster-agent's own policy (base) already accepts
+# 9090 from anywhere, so nothing there changes.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: proteos-postgres
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: proteos-postgres
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: proteos-controlplane
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: proteos-openbao
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: proteos-openbao
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: proteos-controlplane
+      ports:
+        - protocol: TCP
+          port: 8200
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: proteos-controlplane
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: proteos-controlplane
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: proteos-postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: proteos-openbao
+      ports:
+        - protocol: TCP
+          port: 8200
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: proteos-cluster-agent
+      ports:
+        - protocol: TCP
+          port: 9090
+    # The IdP, GitHub's API, git hosts, and any Firecracker hosts or other
+    # clusters listed in PROTEOS_HOSTS. Private ranges are excluded so the
+    # control plane cannot be turned toward the node network; add your other
+    # node-agents' addresses as further rules if they live in one.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16]
+      ports:
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: proteos-web
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: proteos-web
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 80
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: proteos-controlplane
+      ports:
+        - protocol: TCP
+          port: 8080
