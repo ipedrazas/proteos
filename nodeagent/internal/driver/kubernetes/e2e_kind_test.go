@@ -688,3 +688,59 @@ func TestKindListAndReattach(t *testing.T) {
 	}
 	t.Errorf("List omitted machine %s (got %d machines)", id, len(list.Machines))
 }
+
+// ensureWithPolicy is ensure with an egress policy on the request.
+func (a *agent) ensureWithPolicy(t *testing.T, id string, pol api.NetworkPolicyConfig) {
+	t.Helper()
+	resp := a.do(t, http.MethodPut, "/v1/machines/"+id, api.EnsureRequest{
+		Vcpus: 1, MemMiB: 1024, ImageRef: a.image, DiskID: "disk-" + id, DiskMiB: 1024,
+		NetworkPolicy: &pol,
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("ensure: want 202, got %d: %s", resp.StatusCode, b)
+	}
+}
+
+// TestKindFQDNEgress is the K6 FQDN engine against a real Cilium, and it is
+// gated on PROTEOS_E2E_FQDN=1 because it can only pass on one: e2e-kind.sh
+// --cni=cilium sets it. The machine's allow list is a WILDCARD, `*.github.com`,
+// which the IP snapshot cannot express at all — a wildcard does not resolve, so
+// on the snapshot alone the machine gets DNS and nothing else. If
+// api.github.com answers from inside the machine, the addresses came from
+// Cilium's DNS proxy following the name, and from nowhere else. The control is
+// a name outside the list, which must time out.
+func TestKindFQDNEgress(t *testing.T) {
+	if os.Getenv("PROTEOS_E2E_FQDN") == "" {
+		t.Skip("PROTEOS_E2E_FQDN unset: needs a Cilium cluster and PROTEOS_K8S_FQDN_POLICY=cilium on the agent (e2e-kind.sh --cni=cilium)")
+	}
+	a := newAgent(t)
+	const id = "e2e0kind-0000-4000-8000-00000000000f"
+	a.cleanup(t, id)
+
+	a.ensureWithPolicy(t, id, api.NetworkPolicyConfig{
+		Mode: api.NetworkPolicyAllowDomains, Domains: []string{"*.github.com"},
+	})
+	a.waitState(t, id, api.StateRunning, bootTimeout)
+
+	ws, tunnel := a.terminal(t, id, "fqdn")
+	defer tunnel.Close()
+	defer ws.Close()
+
+	// Any HTTP status proves the connection; -w prints it, and the marker is
+	// computed so the PTY echo cannot satisfy it.
+	out := runInGuest(t, ws,
+		`curl -sS -o /dev/null -m 20 -w 'code=%{http_code}' https://api.github.com/; echo " rc=$? $(echo F''QDN-ALLOWED)"`,
+		"FQDN-ALLOWED", 60*time.Second)
+	if !strings.Contains(out, "rc=0") || !strings.Contains(out, "code=2") && !strings.Contains(out, "code=4") {
+		t.Errorf("api.github.com (matched by *.github.com) was not reachable — the FQDN policy is not following names; got %q", tail(out))
+	}
+
+	out = runInGuest(t, ws,
+		`curl -sS -o /dev/null -m 8 -w 'code=%{http_code}' https://example.com/ 2>/dev/null; echo " rc=$? $(echo F''QDN-DENIED)"`,
+		"FQDN-DENIED", 60*time.Second)
+	if strings.Contains(out, "rc=0") {
+		t.Errorf("example.com (not in the allow list) was reachable — egress is not restricted; got %q", tail(out))
+	}
+}

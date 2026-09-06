@@ -34,7 +34,11 @@ func (d *Driver) Status(ctx context.Context, machineID string) (driver.Status, e
 	// window between the volume and the pod being created (or a terminal pod
 	// being replaced), not a stopped machine. Say so. The control-plane poller
 	// asks exactly here, and reads "stopped during boot" as a failed boot.
-	if d.isEnsuring(machineID) {
+	//
+	// Two sources, in cost order: this process's own map, then the stamp the
+	// ensure left on the machine's policy — which is what answers when the
+	// ensure is running on ANOTHER cluster-agent replica (K6).
+	if d.isEnsuring(machineID) || d.ensureMarkedInFlight(ctx, machineID) {
 		return driver.Status{
 			MachineID: machineID,
 			State:     api.StateCreating,
@@ -105,6 +109,18 @@ func (d *Driver) List(ctx context.Context) ([]driver.Status, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list pvcs: %w", err)
 	}
+	// One listing of the policies, for the same mid-ensure question Status
+	// asks per machine: a volume with no pod is "creating", not "stopped",
+	// while its policy carries a fresh ensure stamp.
+	inFlight := make(map[string]bool)
+	if pols, err := d.client.NetworkingV1().NetworkPolicies(d.cfg.Namespace).
+		List(ctx, metav1.ListOptions{LabelSelector: ownedSelector()}); err == nil {
+		for i := range pols.Items {
+			if id := pols.Items[i].Annotations[MachineIDAnnotation]; id != "" && d.markerFresh(pols.Items[i].Annotations) {
+				inFlight[id] = true
+			}
+		}
+	}
 	for i := range pvcs.Items {
 		pvc := &pvcs.Items[i]
 		if terminating(pvc.ObjectMeta) {
@@ -117,9 +133,13 @@ func (d *Driver) List(ctx context.Context) ([]driver.Status, error) {
 		if _, ok := seen[id]; ok {
 			continue
 		}
+		state := api.StateStopped
+		if d.isEnsuring(id) || inFlight[id] {
+			state = api.StateCreating
+		}
 		out = append(out, driver.Status{
 			MachineID: id,
-			State:     api.StateStopped,
+			State:     state,
 			Handle:    d.handle(id),
 			Boot:      api.BootCold,
 			DiskID:    pvc.Annotations[DiskIDAnnotation],

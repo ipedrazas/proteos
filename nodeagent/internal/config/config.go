@@ -209,6 +209,26 @@ type Config struct {
 	// listener image; empty ⇒ the driver's default (agnhost from registry.k8s.io).
 	K8sNetpolProbeImage string
 
+	// K8sFQDNPolicy (PROTEOS_K8S_FQDN_POLICY, "" or "cilium") turns on a CNI
+	// policy engine that follows domain NAMES for allow_domains machines,
+	// instead of the addresses they resolved to at boot (K6). Empty ⇒ the IP
+	// snapshot only. The agent refuses to start if the named engine's CRD is
+	// not served.
+	K8sFQDNPolicy string
+
+	// K8sDNSPodLabels (PROTEOS_K8S_DNS_POD_LABELS, JSON object) selects the
+	// cluster resolver's pods for the FQDN engine's DNS-proxy rule. Empty ⇒
+	// k8s-app=kube-dns, which every CoreDNS distribution uses.
+	K8sDNSPodLabels map[string]string
+
+	// K8sCapacityFromQuota (PROTEOS_K8S_CAPACITY_FROM_QUOTA=1) reports the
+	// machine namespace's ResourceQuota as the cluster's capacity instead of
+	// the nodes currently present — for an autoscaled node pool, where the
+	// nodes present are what it has grown to rather than what it can hold, and
+	// zero nodes would otherwise mean zero capacity forever (K6). Without it a
+	// quota still caps the node sum.
+	K8sCapacityFromQuota bool
+
 	// MgmtIfaces (PROTEOS_AGENT_MGMT_IFACES, comma-separated) are the host
 	// interfaces allowed to reach SSH and the agent API through the firecracker
 	// driver's fail-closed nftables input chain. The token "egress" resolves to
@@ -260,9 +280,15 @@ func Load() (*Config, error) {
 		K8sCPURequestRatio: getenvFloat("PROTEOS_K8S_CPU_REQUEST_RATIO", 1.0),
 		// On unless explicitly "0": the safe default must survive an unset
 		// variable, which is what a Deployment predating this setting has.
-		K8sGuestAuth:        lookupenv("PROTEOS_K8S_GUEST_AUTH", "1") != "0",
-		K8sSkipNetpolProbe:  getenvBool("PROTEOS_K8S_SKIP_NETPOL_PROBE"),
-		K8sNetpolProbeImage: os.Getenv("PROTEOS_K8S_NETPOL_PROBE_IMAGE"),
+		K8sGuestAuth:         lookupenv("PROTEOS_K8S_GUEST_AUTH", "1") != "0",
+		K8sSkipNetpolProbe:   getenvBool("PROTEOS_K8S_SKIP_NETPOL_PROBE"),
+		K8sNetpolProbeImage:  os.Getenv("PROTEOS_K8S_NETPOL_PROBE_IMAGE"),
+		K8sFQDNPolicy:        os.Getenv("PROTEOS_K8S_FQDN_POLICY"),
+		K8sCapacityFromQuota: getenvBool("PROTEOS_K8S_CAPACITY_FROM_QUOTA"),
+	}
+
+	if c.K8sFQDNPolicy != "" && c.K8sFQDNPolicy != "cilium" {
+		return nil, fmt.Errorf("PROTEOS_K8S_FQDN_POLICY must be \"cilium\" or empty, got %q", c.K8sFQDNPolicy)
 	}
 
 	if c.K8sCPURequestRatio <= 0 || c.K8sCPURequestRatio > 1 {
@@ -280,6 +306,12 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	c.K8sAgentPodLabels = agentLabels
+
+	dnsLabels, err := getenvJSONMap("PROTEOS_K8S_DNS_POD_LABELS")
+	if err != nil {
+		return nil, err
+	}
+	c.K8sDNSPodLabels = dnsLabels
 
 	if (c.TLSCert == "") != (c.TLSKey == "") {
 		return nil, fmt.Errorf("PROTEOS_AGENT_TLS_CERT and PROTEOS_AGENT_TLS_KEY must be set together")

@@ -8,16 +8,18 @@ import (
 	authv1 "k8s.io/api/authorization/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// NewClient builds the clientset the driver runs against. An empty kubeconfig
-// path means in-cluster (the production shape: the cluster-agent is a Deployment
-// in the target cluster, using its ServiceAccount token); a path is the
-// out-of-cluster developer/CI shape.
-func NewClient(kubeconfig string) (kubernetes.Interface, error) {
+// NewClients builds the typed clientset the driver runs against, and beside it
+// the dynamic client the FQDN engine writes CRD objects through (fqdn.go). An
+// empty kubeconfig path means in-cluster (the production shape: the
+// cluster-agent is a Deployment in the target cluster, using its
+// ServiceAccount token); a path is the out-of-cluster developer/CI shape.
+func NewClients(kubeconfig string) (kubernetes.Interface, dynamic.Interface, error) {
 	var (
 		cfg *rest.Config
 		err error
@@ -25,16 +27,24 @@ func NewClient(kubeconfig string) (kubernetes.Interface, error) {
 	if kubeconfig == "" {
 		cfg, err = rest.InClusterConfig()
 		if err != nil {
-			return nil, fmt.Errorf("in-cluster config (set PROTEOS_K8S_KUBECONFIG to run outside a cluster): %w", err)
+			return nil, nil, fmt.Errorf("in-cluster config (set PROTEOS_K8S_KUBECONFIG to run outside a cluster): %w", err)
 		}
 	} else {
 		cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 		if err != nil {
-			return nil, fmt.Errorf("kubeconfig %s: %w", kubeconfig, err)
+			return nil, nil, fmt.Errorf("kubeconfig %s: %w", kubeconfig, err)
 		}
 	}
 	cfg.UserAgent = "proteos-node-agent"
-	return kubernetes.NewForConfig(cfg)
+	typed, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return typed, dyn, nil
 }
 
 // requiredVerbs is what the cluster-agent's Role must grant in the machine
@@ -115,6 +125,11 @@ func (d *Driver) Preflight(ctx context.Context) error {
 			"NetworkPolicy is the only thing between another pod and a machine's terminal. See SECURITY.md.")
 	}
 
+	if err := d.preflightFQDN(ctx); err != nil {
+		return err
+	}
+	d.preflightQuota(ctx)
+
 	if d.cfg.SkipNetpolProbe {
 		slog.Warn("kubernetes: SKIPPING the NetworkPolicy enforcement probe (PROTEOS_K8S_SKIP_NETPOL_PROBE). " +
 			"If this CNI does not enforce policy, every machine's guest ports are reachable from any pod " +
@@ -135,6 +150,11 @@ func (d *Driver) canI(ctx context.Context, resource, verb string) (bool, error) 
 	if resource == "networkpolicies" {
 		group = "networking.k8s.io"
 	}
+	return d.canIGroup(ctx, group, resource, verb)
+}
+
+// canIGroup is canI for a resource in an explicit API group (a CRD's).
+func (d *Driver) canIGroup(ctx context.Context, group, resource, verb string) (bool, error) {
 	review := &authv1.SelfSubjectAccessReview{
 		Spec: authv1.SelfSubjectAccessReviewSpec{
 			ResourceAttributes: &authv1.ResourceAttributes{

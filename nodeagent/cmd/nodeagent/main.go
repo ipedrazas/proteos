@@ -145,7 +145,7 @@ func buildDriver(cfg *config.Config) (driver.Driver, error) {
 		// No state.Store: the API server is this driver's record, so it keeps
 		// nothing on the cluster-agent's own disk. Machine pods survive an agent
 		// restart and are found again by label, not by a state.json.
-		client, err := k8sdriver.NewClient(cfg.K8sKubeconfig)
+		client, dyn, err := k8sdriver.NewClients(cfg.K8sKubeconfig)
 		if err != nil {
 			return nil, err
 		}
@@ -159,13 +159,17 @@ func buildDriver(cfg *config.Config) (driver.Driver, error) {
 			NodeSelector:    cfg.K8sNodeSelector,
 			ClusterCIDRs:    cfg.K8sClusterCIDRs,
 			DNSNamespace:    cfg.K8sDNSNamespace,
+			DNSPodLabels:    cfg.K8sDNSPodLabels,
 			DefaultImage:    cfg.K8sDefaultImage,
 			CPURequestRatio: cfg.K8sCPURequestRatio,
 
 			DisableGuestAuth: !cfg.K8sGuestAuth,
 			SkipNetpolProbe:  cfg.K8sSkipNetpolProbe,
 			NetpolProbeImage: cfg.K8sNetpolProbeImage,
-		}), nil
+
+			FQDNPolicy:        cfg.K8sFQDNPolicy,
+			CapacityFromQuota: cfg.K8sCapacityFromQuota,
+		}).WithDynamicClient(dyn), nil
 	default:
 		return nil, errors.New("unknown PROTEOS_AGENT_DRIVER: " + cfg.Driver)
 	}

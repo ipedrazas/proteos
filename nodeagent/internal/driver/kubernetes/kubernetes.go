@@ -45,6 +45,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
@@ -156,6 +157,11 @@ type Config struct {
 	// port 53 to it, or every policy mode would break name resolution.
 	DNSNamespace string
 
+	// DNSPodLabels selects the resolver's pods within DNSNamespace, for the
+	// FQDN engine's DNS-proxy rule (fqdn.go). Empty ⇒ k8s-app=kube-dns, which
+	// is what every CoreDNS distribution uses.
+	DNSPodLabels map[string]string
+
 	// DefaultImage is used when an EnsureRequest carries no image_ref. It exists
 	// for the tracer bullet, before K3 teaches the control plane to send one.
 	DefaultImage string
@@ -204,13 +210,38 @@ type Config struct {
 	// NetpolProbeEnforceTimeout bounds how long the probe waits for a deny
 	// policy to take effect. Zero ⇒ a production default; tests shorten it.
 	NetpolProbeEnforceTimeout time.Duration
+
+	// FQDNPolicy selects a CNI-specific policy engine that follows DOMAIN
+	// NAMES rather than the addresses they resolved to at boot (K6, fqdn.go).
+	// Empty ⇒ the IP snapshot only. FQDNPolicyCilium writes a
+	// CiliumNetworkPolicy beside every allow_domains machine's NetworkPolicy.
+	FQDNPolicy string
+
+	// CapacityFromQuota makes Capacity report the machine namespace's
+	// ResourceQuota as the cluster's total, instead of the sum of the nodes
+	// currently present (K6, capacity.go). For an autoscaled node pool: the
+	// nodes present are what the pool has grown to, not what it can grow to,
+	// and a pool scaled to zero would otherwise advertise no capacity and never
+	// be given the machine that would make it grow. Without it, a quota still
+	// CAPS the node sum when one exists.
+	CapacityFromQuota bool
 }
+
+// FQDNPolicyCilium is the one FQDN engine implemented: Cilium's toFQDNs, which
+// learns addresses from the DNS answers the machine itself receives.
+const FQDNPolicyCilium = "cilium"
 
 // Driver runs machines as pods. It holds no per-machine state: every method is
 // a call against the API server.
 type Driver struct {
 	client kubernetes.Interface
 	cfg    Config
+
+	// dyn reaches the API groups client-go has no typed client for — the
+	// CiliumNetworkPolicy CRD (fqdn.go). Nil unless WithDynamicClient was
+	// called; every use checks, because the typed client is all the driver
+	// needs unless an FQDN engine is configured.
+	dyn dynamic.Interface
 
 	// dial opens the TCP connections DialGuest and the netpol probe make to
 	// pod IPs. A plain net.Dialer in production; tests substitute one.
@@ -228,13 +259,20 @@ type Driver struct {
 		m map[string]guestToken
 	}
 
-	// ensuring holds the machines with an EnsureRunning in flight. An ensure
-	// creates the PVC, the policy, the Secret and then the pod, and a Status
-	// that lands in between sees "a volume and no pod" — which is exactly what a
-	// STOPPED machine looks like. The control-plane poller does land there: it
-	// polls a provisioning machine concurrently with the ensure it issued, and
-	// "stopped during boot" is a failure to it. Process-local, not a record: if
-	// the agent restarts mid-ensure the control plane's retry re-ensures.
+	// ensuring holds the machines with an EnsureRunning in flight IN THIS
+	// PROCESS. An ensure creates the policy, the PVC, the Secret and then the
+	// pod, and a Status that lands in between sees "a volume and no pod" —
+	// which is exactly what a STOPPED machine looks like. The control-plane
+	// poller does land there: it polls a provisioning machine concurrently with
+	// the ensure it issued, and "stopped during boot" is a failure to it.
+	//
+	// This map answers the question for the replica running the ensure. With
+	// two cluster-agent replicas behind one Service the poll can land on the
+	// OTHER one, which is why the ensure also stamps the machine's
+	// NetworkPolicy (EnsuredAtAnnotation, network.go): that is the same fact,
+	// visible from every replica, and Status consults both. The map stays
+	// because it is exact and free, and covers the instant before the stamp
+	// lands.
 	ensuring struct {
 		sync.Mutex
 		m map[string]int
@@ -300,6 +338,14 @@ func (d *Driver) isEnsuring(machineID string) bool {
 // probe's verdict on a CNI that does or does not enforce policy, are observed.
 func (d *Driver) WithDialer(dial func(ctx context.Context, network, addr string) (net.Conn, error)) *Driver {
 	d.dial = dial
+	return d
+}
+
+// WithDynamicClient supplies the client the FQDN policy engine writes its CRD
+// objects through. Production passes the dynamic client built beside the
+// typed one (NewClients); tests pass k8s.io/client-go/dynamic/fake.
+func (d *Driver) WithDynamicClient(dyn dynamic.Interface) *Driver {
+	d.dyn = dyn
 	return d
 }
 
@@ -370,10 +416,31 @@ func (d *Driver) EnsureRunning(ctx context.Context, spec driver.VMSpec) (string,
 	// From here until the pod exists, Status must say "creating", not "stopped".
 	defer d.beginEnsure(spec.MachineID)()
 
-	if err := d.ensurePVC(ctx, spec); err != nil {
+	// The policy goes FIRST, and not only because it must exist before the pod
+	// it restricts: it carries the ensure marker every replica reads, so it
+	// has to be the first thing another replica can observe. A Status that
+	// lands between the PVC and the pod then finds the stamp and says
+	// "creating" whichever replica answers it (see Status). The stamp is
+	// cleared when this ensure is over, success or not: by then the pod exists
+	// and speaks for itself, or the control plane has been told why not.
+	stamp, err := d.ensureNetworkPolicy(ctx, spec)
+	if err != nil {
 		return "", err
 	}
-	if err := d.ensureNetworkPolicy(ctx, spec); err != nil {
+	defer func() {
+		// Not the request context: a caller that gave up mid-ensure must not
+		// also leave a stale "in flight" stamp behind for the marker's TTL.
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if err := d.clearEnsureMarker(cctx, spec.MachineID, stamp); err != nil {
+			slog.Warn("kubernetes: could not clear the ensure marker; Status may report creating until it expires",
+				"machine", spec.MachineID, "err", err)
+		}
+	}()
+	if err := d.ensureFQDNPolicy(ctx, spec); err != nil {
+		return "", err
+	}
+	if err := d.ensurePVC(ctx, spec); err != nil {
 		return "", err
 	}
 	if err := d.ensurePod(ctx, spec, image); err != nil {
@@ -539,8 +606,10 @@ func (d *Driver) Stop(ctx context.Context, machineID string, mode driver.StopMod
 	if _, err := d.client.CoreV1().Pods(d.cfg.Namespace).Get(ctx, name, metav1.GetOptions{}); err != nil {
 		if apierrors.IsNotFound(err) {
 			// No pod, but a PVC means the machine exists and is already stopped.
+			// Still clear the marker: this is the shape an agent that died
+			// mid-ensure leaves behind, and a stop is the operator's way out.
 			if d.pvcExists(ctx, machineID) {
-				return nil
+				return d.clearEnsureMarker(ctx, machineID, "")
 			}
 			return driver.ErrUnknownMachine
 		}
@@ -560,7 +629,10 @@ func (d *Driver) Stop(ctx context.Context, machineID string, mode driver.StopMod
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete pod %s: %w", name, err)
 	}
-	return nil
+	// Belt and braces: the ensure that wrote the stamp clears it when it ends,
+	// but an agent that died mid-ensure never did, and a stop is the moment
+	// "in flight" stops being true whatever the annotation says.
+	return d.clearEnsureMarker(ctx, machineID, "")
 }
 
 // Destroy removes every trace of a machine: pod, NetworkPolicy, PVC and the
@@ -582,6 +654,9 @@ func (d *Driver) Destroy(ctx context.Context, machineID string) error {
 		Delete(ctx, netpolName(machineID), metav1.DeleteOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete networkpolicy %s: %w", netpolName(machineID), err)
+	}
+	if err := d.deleteFQDNPolicy(ctx, machineID); err != nil {
+		return err
 	}
 
 	err = d.client.CoreV1().PersistentVolumeClaims(d.cfg.Namespace).
