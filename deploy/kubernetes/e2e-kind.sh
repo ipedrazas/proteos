@@ -22,6 +22,10 @@
 #   deploy/kubernetes/e2e-kind.sh --keep     # leave the cluster up afterwards
 #   deploy/kubernetes/e2e-kind.sh --no-build # reuse already-built :e2e images
 #   deploy/kubernetes/e2e-kind.sh --reuse    # reuse an existing kind cluster
+#   deploy/kubernetes/e2e-kind.sh --cni=cilium
+#       # K6: a Cilium cluster instead of kind's default CNI, the agent with
+#       # PROTEOS_K8S_FQDN_POLICY=cilium, and the FQDN egress test enabled.
+#       # Needs the `cilium` CLI (or CILIUM_BIN); slower, and not the CI job.
 #
 # Requires: kind, kubectl, docker, go, openssl.
 set -euo pipefail
@@ -46,12 +50,15 @@ die() {
 KEEP=0
 BUILD=1
 REUSE=0
+CNI=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --keep) KEEP=1; shift ;;
     --no-build) BUILD=0; shift ;;
     --reuse) REUSE=1; shift ;;
-    -h | --help) sed -n '2,26p' "$0"; exit 0 ;;
+    --cni=cilium) CNI=cilium; shift ;;
+    --cni=*) die "unknown CNI '${1#--cni=}' (only cilium is supported)" ;;
+    -h | --help) sed -n '2,30p' "$0"; exit 0 ;;
     *) die "unknown arg: $1" ;;
   esac
 done
@@ -59,6 +66,10 @@ done
 for bin in kind kubectl docker go openssl; do
   command -v "$bin" >/dev/null || die "$bin is required"
 done
+CILIUM_BIN="${CILIUM_BIN:-cilium}"
+if [[ $CNI == cilium ]]; then
+  command -v "$CILIUM_BIN" >/dev/null || die "--cni=cilium needs the cilium CLI (set CILIUM_BIN, or https://github.com/cilium/cilium-cli/releases)"
+fi
 
 PF_PID=""
 WORK="$(mktemp -d)"
@@ -89,17 +100,42 @@ cleanup() {
 trap cleanup EXIT
 
 # --- 1. cluster -------------------------------------------------------------
+# With --cni=cilium the cluster is created WITHOUT kind's default CNI and
+# Cilium is installed into it: the FQDN engine (K6) writes CiliumNetworkPolicy
+# objects, and only Cilium's DNS proxy can make toFQDNs follow a name. kind's
+# own CNI enforces NetworkPolicy (the K5 probe passes on it) but has no
+# FQDN-aware policy of any kind.
+create_cluster() {
+  if [[ $CNI == cilium ]]; then
+    cat >"$WORK/kind.yaml" <<'YAML'
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  disableDefaultCNI: true
+YAML
+    # No --wait: nodes cannot be Ready before a CNI exists.
+    kind create cluster --name "$CLUSTER" --config "$WORK/kind.yaml"
+    log "installing Cilium (this pulls its images; a few minutes the first time)"
+    "$CILIUM_BIN" install --wait >"$WORK/cilium-install.log" 2>&1 \
+      || { tail -20 "$WORK/cilium-install.log"; die "cilium install failed"; }
+    "$CILIUM_BIN" status --wait >/dev/null || die "cilium never became ready"
+    kubectl wait --for=condition=Ready node --all --timeout=180s >/dev/null
+    ok "Cilium installed ($("$CILIUM_BIN" version 2>/dev/null | grep -m1 'cilium image (running)' || true))"
+  else
+    kind create cluster --name "$CLUSTER" --wait 120s
+  fi
+}
 if kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
   if [[ $REUSE -eq 1 ]]; then
     log "reusing existing cluster '$CLUSTER'"
   else
     log "deleting stale cluster '$CLUSTER'"
     kind delete cluster --name "$CLUSTER" >/dev/null
-    kind create cluster --name "$CLUSTER" --wait 120s
+    create_cluster
   fi
 else
   log "creating kind cluster '$CLUSTER'"
-  kind create cluster --name "$CLUSTER" --wait 120s
+  create_cluster
 fi
 kubectl config use-context "kind-$CLUSTER" >/dev/null
 
@@ -158,7 +194,23 @@ ok "secret created"
 # --- 4. manifests -----------------------------------------------------------
 log "applying deploy/kubernetes/overlays/kind"
 kubectl apply -k "$SCRIPT_DIR/overlays/kind" >/dev/null || die "kubectl apply failed"
+if [[ $CNI == cilium ]]; then
+  # What a Cilium cluster needs on top of the base, applied the way an operator
+  # would rather than through a third overlay: the CiliumNetworkPolicy that
+  # lets the agent reach the API server at all (a NetworkPolicy ipBlock does
+  # not match cluster nodes on Cilium — without it the agent never becomes
+  # ready and its log is empty), and the FQDN engine. The agent's preflight
+  # checks that the CRD is served and refuses to start otherwise.
+  kubectl apply -f "$SCRIPT_DIR/base/networkpolicy-cilium.yaml" >/dev/null || die "apply of the Cilium agent policy failed"
+  kubectl -n "$AGENT_NS" set env deploy/proteos-cluster-agent PROTEOS_K8S_FQDN_POLICY=cilium >/dev/null
+fi
 
+if [[ $REUSE -eq 1 ]]; then
+  # A fresh token was written into the Secret above, and a Secret change does
+  # not restart the pods that read it into their environment: on a reused
+  # cluster the running agent would keep answering 401 with the old one.
+  kubectl -n "$AGENT_NS" rollout restart deploy/proteos-cluster-agent >/dev/null
+fi
 log "waiting for the cluster-agent to become ready"
 if ! kubectl -n "$AGENT_NS" rollout status deploy/proteos-cluster-agent --timeout=180s; then
   kubectl -n "$AGENT_NS" describe deploy/proteos-cluster-agent | tail -30
@@ -176,8 +228,18 @@ ok "cluster-agent ready"
 # under test actually blocks pod-to-machine traffic, rather than that the driver
 # merely writes the objects. Reaching "ready" already proves the agent did not
 # refuse to start; this proves it did not skip the question.
-if ! kubectl -n "$AGENT_NS" logs deploy/proteos-cluster-agent | grep -q "NetworkPolicy enforcement verified"; then
-  kubectl -n "$AGENT_NS" logs deploy/proteos-cluster-agent --tail=40 || true
+#
+# By label, not `logs deploy/`: after a rollout (a reused cluster) a pod from
+# the previous ReplicaSet can linger in Terminating, `logs deploy/` may pick it
+# and lose it mid-call, and the verdict would be missed on a healthy agent. So
+# wait for the old pods to go, then read every agent pod's log.
+agent_pods() { kubectl -n "$AGENT_NS" get pods -l app.kubernetes.io/name=proteos-cluster-agent --no-headers 2>/dev/null; }
+for _ in $(seq 1 45); do
+  agent_pods | grep -q Terminating || break
+  sleep 2
+done
+if ! kubectl -n "$AGENT_NS" logs -l app.kubernetes.io/name=proteos-cluster-agent --tail=-1 | grep -q "NetworkPolicy enforcement verified"; then
+  kubectl -n "$AGENT_NS" logs -l app.kubernetes.io/name=proteos-cluster-agent --tail=40 || true
   FAILED=1
   die "the cluster-agent came up without verifying NetworkPolicy enforcement"
 fi
@@ -204,6 +266,7 @@ set +e
     PROTEOS_E2E_AGENT_URL="https://127.0.0.1:$LOCAL_PORT" \
       PROTEOS_E2E_AGENT_TOKEN="$TOKEN" \
       PROTEOS_E2E_GUEST_IMAGE="$GUEST_IMAGE" \
+      PROTEOS_E2E_FQDN="$([[ $CNI == cilium ]] && echo 1 || true)" \
       go test -tags=kind_e2e -count=1 -failfast -timeout 35m -v ./internal/driver/kubernetes/ -run 'TestKind'
 )
 RC=$?
@@ -256,8 +319,11 @@ log "waiting for destroyed machine objects to finish terminating"
 leak_count() {
   # secrets: the per-machine guest listener token (K5) leaves with Destroy too.
   # The netpol canary also carries the managed-by label, so a probe that failed
-  # to clean up after itself is caught here as well.
-  kubectl -n "$MACHINE_NS" get pods,pvc,networkpolicies,secrets \
+  # to clean up after itself is caught here as well. On Cilium the machine's
+  # CiliumNetworkPolicy (K6) is one more object Destroy must take with it.
+  local kinds=pods,pvc,networkpolicies,secrets
+  [[ $CNI == cilium ]] && kinds="$kinds,ciliumnetworkpolicies"
+  kubectl -n "$MACHINE_NS" get "$kinds" \
     -l app.kubernetes.io/managed-by=proteos --no-headers 2>/dev/null | grep -c . || true
 }
 for _ in $(seq 1 60); do

@@ -47,6 +47,20 @@ rules:
   - apiGroups: [""]
     resources: [events]
     verbs: [get, list, watch]
+  # The namespace's ResourceQuota, if the operator set one (K6): it caps the
+  # capacity figure the agent advertises, and with
+  # PROTEOS_K8S_CAPACITY_FROM_QUOTA it IS that figure. Read-only; the agent
+  # never writes a quota.
+  - apiGroups: [""]
+    resources: [resourcequotas]
+    verbs: [get, list]
+  # FQDN egress (K6): one CiliumNetworkPolicy beside each allow_domains
+  # machine's NetworkPolicy, written only when PROTEOS_K8S_FQDN_POLICY=cilium.
+  # Harmless on a cluster without Cilium — RBAC rules are strings, and a rule
+  # for a group the API server does not serve grants nothing.
+  - apiGroups: [cilium.io]
+    resources: [ciliumnetworkpolicies]
+    verbs: [get, list, create, update, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

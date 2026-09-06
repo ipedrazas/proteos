@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -57,29 +58,119 @@ const domainResolveTimeout = 5 * time.Second
 // The ingress rule below is the whole reason that is still safe, which is why
 // the cluster-agent refuses to start on a CNI that does not enforce policy
 // (see Preflight).
-func (d *Driver) ensureNetworkPolicy(ctx context.Context, spec driver.VMSpec) error {
+//
+// It returns the ensure stamp it wrote (EnsuredAtAnnotation), so the caller can
+// clear exactly that stamp — and not a newer one from a concurrent ensure —
+// when its ensure is over.
+func (d *Driver) ensureNetworkPolicy(ctx context.Context, spec driver.VMSpec) (string, error) {
 	name := netpolName(spec.MachineID)
 	policies := d.client.NetworkingV1().NetworkPolicies(d.cfg.Namespace)
 
 	desired := d.buildNetworkPolicy(ctx, spec)
+	stamp := time.Now().UTC().Format(time.RFC3339Nano)
+	desired.Annotations[EnsuredAtAnnotation] = stamp
 
 	existing, err := policies.Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		if _, err := policies.Create(ctx, desired, metav1.CreateOptions{}); err != nil &&
 			!apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("create networkpolicy %s: %w", name, err)
+			return "", fmt.Errorf("create networkpolicy %s: %w", name, err)
 		}
-		return nil
+		return stamp, nil
 	}
 	if err != nil {
-		return fmt.Errorf("get networkpolicy %s: %w", name, err)
+		return "", fmt.Errorf("get networkpolicy %s: %w", name, err)
 	}
 
 	desired.ResourceVersion = existing.ResourceVersion
 	if _, err := policies.Update(ctx, desired, metav1.UpdateOptions{}); err != nil {
-		return fmt.Errorf("update networkpolicy %s: %w", name, err)
+		return "", fmt.Errorf("update networkpolicy %s: %w", name, err)
 	}
-	return nil
+	return stamp, nil
+}
+
+// EnsuredAtAnnotation is stamped on a machine's NetworkPolicy by every ensure,
+// before anything else is written, and removed again when that ensure ends: it
+// is how a cluster-agent replica that did NOT run the ensure can tell "a volume
+// and no pod, mid-boot" from "a volume and no pod, stopped" — the two are
+// otherwise identical to a Get. The policy carries it because the policy is
+// the first object an ensure writes, is rewritten on every ensure anyway, and
+// leaves with Destroy. Stop clears it too, in case the ensure that wrote it
+// never got to.
+const EnsuredAtAnnotation = "proteos.io/ensured-at"
+
+// ensureMarkerTTL bounds how long a stamp counts as "an ensure is in flight"
+// when the ensure that wrote it never cleared it — a cluster-agent that died
+// mid-ensure. An ensure that merely stalls is bounded by two delete-waits (a
+// terminating pod, then a terminating volume); a stamp older than that with
+// still no pod is an ensure the control plane has already been told about,
+// and the machine is what it looks like — stopped.
+func (d *Driver) ensureMarkerTTL() time.Duration {
+	wait := d.cfg.DeleteWaitTimeout
+	if wait <= 0 {
+		wait = defaultDeleteWait
+	}
+	return 2*wait + 30*time.Second
+}
+
+// markerFresh reports whether an EnsuredAtAnnotation value is recent enough to
+// mean an ensure is still in flight. Unparseable and absent both mean no.
+func (d *Driver) markerFresh(annotations map[string]string) bool {
+	stamp, ok := annotations[EnsuredAtAnnotation]
+	if !ok {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339Nano, stamp)
+	if err != nil {
+		return false
+	}
+	return time.Since(at) < d.ensureMarkerTTL()
+}
+
+// ensureMarkedInFlight is the cluster-visible half of isEnsuring: it reads the
+// machine's policy and asks whether another replica (or this one, a moment
+// ago) stamped it recently. A missing policy is simply "no".
+func (d *Driver) ensureMarkedInFlight(ctx context.Context, machineID string) bool {
+	pol, err := d.client.NetworkingV1().NetworkPolicies(d.cfg.Namespace).
+		Get(ctx, netpolName(machineID), metav1.GetOptions{})
+	if err != nil {
+		return false
+	}
+	return d.markerFresh(pol.Annotations)
+}
+
+// clearEnsureMarker removes the stamp. EnsureRunning calls it when its ensure
+// ends, with the stamp it wrote, so that a stamp a CONCURRENT ensure wrote
+// afterwards survives until that ensure ends; Stop calls it with an empty
+// onlyIf and removes whatever is there, because after a stop nothing is in
+// flight whatever the annotation says. A missing policy is fine (a Destroy
+// took it); an update conflict is retried once, because a concurrent ensure
+// may have just rewritten the object.
+func (d *Driver) clearEnsureMarker(ctx context.Context, machineID, onlyIf string) error {
+	policies := d.client.NetworkingV1().NetworkPolicies(d.cfg.Namespace)
+	name := netpolName(machineID)
+	for attempt := 0; attempt < 2; attempt++ {
+		pol, err := policies.Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("get networkpolicy %s: %w", name, err)
+		}
+		current, ok := pol.Annotations[EnsuredAtAnnotation]
+		if !ok || (onlyIf != "" && current != onlyIf) {
+			return nil
+		}
+		delete(pol.Annotations, EnsuredAtAnnotation)
+		_, err = policies.Update(ctx, pol, metav1.UpdateOptions{})
+		if err == nil || apierrors.IsNotFound(err) {
+			return nil
+		}
+		if !apierrors.IsConflict(err) {
+			return fmt.Errorf("clear ensure marker on %s: %w", name, err)
+		}
+	}
+	return fmt.Errorf("clear ensure marker on %s: conflicting updates", name)
 }
 
 // buildNetworkPolicy renders one machine's ingress + egress rules.
@@ -230,6 +321,16 @@ func (d *Driver) resolveDomains(ctx context.Context, domains []string) []string 
 	seen := make(map[string]struct{})
 	var out []string
 	for _, domain := range domains {
+		if strings.HasPrefix(domain, "*.") {
+			// A pattern has no addresses to snapshot. It is followed by the
+			// FQDN engine (fqdn.go) where one is configured; here it would
+			// only produce a resolver error that reads like a broken name.
+			if !d.fqdnEnabled() {
+				slog.Warn("kubernetes: wildcard policy domain is not followed without an FQDN engine (PROTEOS_K8S_FQDN_POLICY)",
+					"domain", domain)
+			}
+			continue
+		}
 		addrs, err := net.DefaultResolver.LookupNetIP(ctx, "ip4", domain)
 		if err != nil {
 			slog.Warn("kubernetes: could not resolve policy domain", "domain", domain, "err", err)

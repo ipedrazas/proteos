@@ -110,6 +110,19 @@ func (d *Driver) ensurePVC(ctx context.Context, spec driver.VMSpec) error {
 	return nil
 }
 
+// noDisruptAnnotations tell the two node autoscalers that a machine pod is not
+// theirs to move (K6). Both consolidate by evicting pods from an underused node
+// so it can be removed, and to them a bare pod with a PVC is a perfectly
+// evictable workload. To ProteOS it is someone's running session: an eviction
+// is a stop the user did not ask for, and on a node-local StorageClass the pod
+// cannot even come back on another node. The annotations keep the autoscaler
+// from choosing this node for scale-down while a machine is on it; a stopped
+// machine has no pod and constrains nothing.
+var noDisruptAnnotations = map[string]string{
+	"cluster-autoscaler.kubernetes.io/safe-to-evict": "false",
+	"karpenter.sh/do-not-disrupt":                    "true",
+}
+
 // buildPod is the machine pod spec: the guest agent, and sshd beside it.
 //
 // Security context (K-plan decision 6): the guest keeps its root-agent /
@@ -121,6 +134,9 @@ func (d *Driver) ensurePVC(ctx context.Context, spec driver.VMSpec) error {
 func (d *Driver) buildPod(spec driver.VMSpec, image string) *corev1.Pod {
 	name := resourceName(spec.MachineID)
 	meta := d.objectMeta(name, spec)
+	for k, v := range noDisruptAnnotations {
+		meta.Annotations[k] = v
+	}
 
 	// A pod's rootfs is ephemeral, so /persist is the PVC and /run/proteos is
 	// memory-backed: the secrets package requires its env dir to be tmpfs so

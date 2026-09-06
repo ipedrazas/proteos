@@ -4,6 +4,7 @@ package firecracker
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"strings"
 
@@ -329,6 +330,14 @@ func resolveDomainIPs(domains []string) []string {
 	seen := make(map[string]bool, len(domains))
 	var ips []string
 	for _, d := range domains {
+		if strings.HasPrefix(d, "*.") {
+			// A wildcard is accepted by the control plane for backends with an
+			// FQDN-aware policy engine; an nftables set has nothing to put in
+			// it for one. Skipped, and said so — otherwise it is indistinguishable
+			// from a typo that failed to resolve.
+			slog.Warn("network policy: wildcard domain is not followed on this backend (IP snapshot)", "domain", d)
+			continue
+		}
 		addrs, err := net.LookupHost(d)
 		if err != nil {
 			continue

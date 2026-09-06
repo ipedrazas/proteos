@@ -5,6 +5,12 @@ kind: Deployment
 metadata:
   name: proteos-cluster-agent
 spec:
+  # Two replicas (K6): a node drain or a bad node no longer takes the host away
+  # from the control plane, and a rollout has no gap. The base explains why
+  # this is safe; the PDB and the anti-affinity there are already shaped for
+  # it. Verified on a three-node k3s cluster with every write sent to one
+  # replica and every status poll to the other.
+  replicas: 2
   template:
     spec:
       # ProteOS's GHCR packages are private, so the cluster-agent needs a pull

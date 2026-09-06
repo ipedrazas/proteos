@@ -1,0 +1,129 @@
+# OpenBao, as compose.yaml runs it: single node, file storage on a persistent
+# volume, boots SEALED, and an unsealer sidecar that unseals it whenever it
+# finds it sealed. The unseal key is written by deploy/app-stack/openbao-init.sh
+# (run against a port-forward — README.md) into the Secret
+# proteos-openbao-unseal; until that exists the sidecar waits, and the control
+# plane runs on its file backend exactly as the compose stack does before init.
+apiVersion: v1
+kind: Service
+metadata:
+  name: proteos-openbao
+  labels:
+    app.kubernetes.io/name: proteos-openbao
+spec:
+  selector:
+    app.kubernetes.io/name: proteos-openbao
+  ports:
+    - name: api
+      port: 8200
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: proteos-openbao
+  labels:
+    app.kubernetes.io/name: proteos-openbao
+spec:
+  serviceName: proteos-openbao
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: proteos-openbao
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: proteos-openbao
+    spec:
+      securityContext:
+        fsGroup: 1000 # the openbao image's user
+      containers:
+        - name: openbao
+          image: openbao/openbao:2.5.1
+          args: [server]
+          env:
+            # For the readiness probe's `bao status`, which otherwise assumes
+            # https and reports the server down for ever. The server itself
+            # reads only BAO_LOCAL_CONFIG.
+            - name: BAO_ADDR
+              value: http://127.0.0.1:8200
+            - name: BAO_LOCAL_CONFIG
+              value: >-
+                {"storage": {"file": {"path": "/openbao/data"}},
+                 "listener": {"tcp": {"address": "0.0.0.0:8200", "tls_disable": true}},
+                 "api_addr": "http://proteos-openbao:8200", "ui": false}
+          ports:
+            - name: api
+              containerPort: 8200
+          securityContext:
+            capabilities:
+              add: [IPC_LOCK] # mlock, so key material is never swapped
+          volumeMounts:
+            - name: baodata
+              mountPath: /openbao/data
+            - name: baologs
+              mountPath: /openbao/logs
+          # Healthy when the server answers, sealed or not: `bao status` exits
+          # 0 unsealed and 2 sealed, and both mean the process is up.
+          readinessProbe:
+            exec:
+              command: [sh, -c, "bao status >/dev/null 2>&1; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ]"]
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+        # The auto-unsealer: deploy/app-stack/bao-unsealer.sh, inline. Polls
+        # every 10 s and unseals with the key from the Secret; with no key yet it
+        # says so and waits, which is the state before openbao-init.sh has run.
+        - name: unsealer
+          image: openbao/openbao:2.5.1
+          command:
+            - /bin/sh
+            - -c
+            - |
+              export BAO_ADDR=http://127.0.0.1:8200
+              KEY_FILE=/run/secrets/bao-unseal-key/unseal-key
+              echo "unsealer: starting (addr=$BAO_ADDR)"
+              while true; do
+                bao status >/dev/null 2>&1; rc=$?
+                case $rc in
+                  0) ;;
+                  2) if [ ! -s "$KEY_FILE" ]; then
+                       echo "unsealer: OpenBao is sealed but no key yet — waiting for openbao-init.sh"
+                     else
+                       echo "unsealer: OpenBao is sealed, unsealing…"
+                       bao operator unseal "$(cat "$KEY_FILE")" >/dev/null 2>&1 \
+                         && echo "unsealer: unsealed successfully" \
+                         || echo "unsealer: unseal attempt failed (will retry)"
+                     fi ;;
+                  *) ;;
+                esac
+                sleep 10
+              done
+          volumeMounts:
+            - name: unseal-key
+              mountPath: /run/secrets/bao-unseal-key
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+      volumes:
+        - name: baologs
+          emptyDir: {}
+        - name: unseal-key
+          secret:
+            secretName: proteos-openbao-unseal
+            optional: true # absent until openbao-init.sh has run
+  volumeClaimTemplates:
+    - metadata:
+        name: baodata
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 1Gi

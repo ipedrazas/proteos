@@ -26,6 +26,14 @@ Two machines — see RUNBOOK.md "Topology" for the full diagram:
   and the isolation trade-off SECURITY.md. A fleet may mix both kinds of host;
   the templates a machine can be created from decide which hosts it can land on
   (`rootfs_ref` for Firecracker, `image_ref` for Kubernetes).
+- **Everything in the cluster**, alternatively (K6): `deploy/kubernetes/
+  app-stack/` runs this same compose stack — the same images, the same
+  environment — as Kubernetes objects beside the cluster-agent, with the
+  control plane dialling the agent by Service name and reading its token and
+  certificate from the agent's own Secret. The rolling-deploy procedure below
+  becomes the Deployment's own `maxSurge: 1, maxUnavailable: 0`; the images
+  are pinned with a kustomize `images:` entry instead of `PROTEOS_VERSION`.
+  See "The app stack in the cluster" in that README.
 
 ## Images
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	api "github.com/tavon-ai/proteos/nodeagent/api"
@@ -796,5 +797,92 @@ func TestReattachFindsExistingMachines(t *testing.T) {
 	}
 	if st.GuestIP == "" {
 		t.Error("restarted agent lost the pod IP")
+	}
+}
+
+// --- K6: autoscaling ---------------------------------------------------------
+
+// A ResourceQuota is the operator's statement of what machines may have. When
+// one exists it caps the node sum; with CapacityFromQuota it IS the total, so
+// an autoscaled pool — even one scaled to zero nodes — still advertises what it
+// can grow to.
+func TestCapacityIsBoundedByAResourceQuota(t *testing.T) {
+	ctx := context.Background()
+	quota := &corev1.ResourceQuota{
+		ObjectMeta: metav1.ObjectMeta{Name: "proteos-machines", Namespace: testNamespace},
+		Spec: corev1.ResourceQuotaSpec{Hard: corev1.ResourceList{
+			corev1.ResourceLimitsCPU:       resource.MustParse("6"),
+			corev1.ResourceRequestsCPU:     resource.MustParse("2"),
+			corev1.ResourceLimitsMemory:    resource.MustParse("48Gi"),
+			corev1.ResourceRequestsMemory:  resource.MustParse("48Gi"),
+			corev1.ResourceRequestsStorage: resource.MustParse("500Gi"),
+		}},
+	}
+
+	// Nodes present (16 vcpus / 32 GiB across the two schedulable ones) and a
+	// quota: the smaller figure per resource wins, and disk comes from the quota.
+	d, cluster := newDriver(t, 0)
+	if _, err := cluster.CoreV1().ResourceQuotas(testNamespace).Create(ctx, quota, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	cap, err := d.Capacity(ctx)
+	if err != nil {
+		t.Fatalf("Capacity: %v", err)
+	}
+	if cap.TotalVcpus != 6 {
+		t.Errorf("total vcpus = %d, want 6 (the quota's limits.cpu, below the nodes' 16)", cap.TotalVcpus)
+	}
+	if cap.TotalMemMiB != 32768 {
+		t.Errorf("total mem = %d MiB, want 32768 (the nodes, below the quota's 48Gi)", cap.TotalMemMiB)
+	}
+	if cap.TotalDiskMiB != 500*1024 {
+		t.Errorf("total disk = %d MiB, want the quota's 500Gi", cap.TotalDiskMiB)
+	}
+
+	// An autoscaled pool with NO nodes yet: from the nodes it is zero, and a
+	// cluster that reports zero is never given the machine that would make it
+	// grow. From the quota it is what the pool may become.
+	empty := fakecluster.New(fakecluster.Options{Namespace: testNamespace})
+	if _, err := empty.CoreV1().ResourceQuotas(testNamespace).Create(ctx, quota, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	fromNodes := k8s.New(empty, k8s.Config{Namespace: testNamespace, CapacityTTL: time.Nanosecond})
+	if cap, err = fromNodes.Capacity(ctx); err != nil || cap.TotalVcpus != 0 {
+		t.Fatalf("empty pool from nodes: %+v err=%v, want zero (the pool has not grown yet)", cap, err)
+	}
+	fromQuota := k8s.New(empty, k8s.Config{Namespace: testNamespace, CapacityTTL: time.Nanosecond, CapacityFromQuota: true})
+	if cap, err = fromQuota.Capacity(ctx); err != nil {
+		t.Fatalf("Capacity: %v", err)
+	}
+	if cap.TotalVcpus != 6 || cap.TotalMemMiB != 48*1024 || cap.TotalDiskMiB != 500*1024 {
+		t.Errorf("empty pool from quota = %+v, want 6 vcpus / 48Gi / 500Gi", cap)
+	}
+}
+
+// A machine pod is someone's running session, and on a node-local StorageClass
+// it cannot even come back elsewhere. Both node autoscalers must be told it is
+// not theirs to evict for a scale-down.
+func TestMachinePodsRefuseAutoscalerEviction(t *testing.T) {
+	d, cluster := newDriver(t, 0)
+	ctx := context.Background()
+	const id = "aaaaaaaa-0000-4000-8000-0000000000a5"
+	if _, err := d.EnsureRunning(ctx, spec(id)); err != nil {
+		t.Fatal(err)
+	}
+	pod, err := cluster.CoreV1().Pods(testNamespace).Get(ctx, "m-"+id, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pod.Annotations["cluster-autoscaler.kubernetes.io/safe-to-evict"] != "false" {
+		t.Error("machine pod lacks cluster-autoscaler.kubernetes.io/safe-to-evict=false")
+	}
+	if pod.Annotations["karpenter.sh/do-not-disrupt"] != "true" {
+		t.Error("machine pod lacks karpenter.sh/do-not-disrupt=true")
+	}
+	// Only the pod: the PVC and the policy constrain nothing and must not
+	// carry annotations that mean something to a controller.
+	pvc, _ := cluster.CoreV1().PersistentVolumeClaims(testNamespace).Get(ctx, "m-"+id+"-persist", metav1.GetOptions{})
+	if _, has := pvc.Annotations["karpenter.sh/do-not-disrupt"]; has {
+		t.Error("the PVC carries the pod's do-not-disrupt annotation")
 	}
 }

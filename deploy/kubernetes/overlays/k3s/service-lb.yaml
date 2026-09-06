@@ -21,6 +21,11 @@ metadata:
 spec:
   type: LoadBalancer
   # Local: preserve the control plane's source address and avoid a second hop
-  # between nodes. The agent is one pod; there is nothing to load-balance, and
-  # both klipper and MetalLB steer traffic to the node actually running it.
+  # between nodes. Both klipper and MetalLB steer traffic to a node actually
+  # running a replica; with two replicas (agent-env.yaml) that is failover
+  # rather than load-balancing, which is all the agent needs.
+  #
+  # Only needed for a control plane OUTSIDE the cluster. With the app stack in
+  # the cluster (deploy/kubernetes/app-stack/) the control plane dials the
+  # ClusterIP Service by name and this LoadBalancer can be dropped.
   externalTrafficPolicy: Local

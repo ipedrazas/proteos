@@ -1,0 +1,77 @@
+# The web front end: nginx serving the SPA and reverse-proxying /api, /gw and
+# the per-machine origins to the control plane, so the browser sees ONE origin
+# (the session cookie + CSRF model depends on it). The image is the compose
+# stack's; the two environment variables are how its nginx.conf is pointed at
+# this cluster's DNS and this Service instead of Docker's (web.Dockerfile).
+#
+# Exposure is the overlay's decision: the k3s overlay makes this Service a
+# LoadBalancer; a cluster with an ingress controller puts an Ingress in front
+# and terminates TLS there. Either way, the editor/preview origins
+# (m-<uuid>.<PROTEOS_MACHINE_DOMAIN>) need a wildcard record and certificate
+# pointing at the same place — DEPLOYMENT.md "Wildcard DNS/TLS for the editor".
+apiVersion: v1
+kind: Service
+metadata:
+  name: proteos-web
+  labels:
+    app.kubernetes.io/name: proteos-web
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: proteos-web
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proteos-web
+  labels:
+    app.kubernetes.io/name: proteos-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: proteos-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: proteos-web
+    spec:
+      containers:
+        - name: web
+          image: ghcr.io/tavon-ai/proteos-ui:latest
+          env:
+            # nginx re-resolves the upstream through this on a 10 s interval so
+            # a control-plane rollout is followed without a restart. A NAME, not
+            # kube-dns's ClusterIP, which differs per cluster; nginx resolves the
+            # name once at startup through the pod's own resolv.conf.
+            - name: PROTEOS_DNS_RESOLVER
+              value: kube-dns.kube-system.svc.cluster.local
+            # FULLY qualified, because nginx's own resolver does not apply the
+            # pod's search domains: the bare `proteos-controlplane` that the
+            # compose stack's Docker DNS answers is NXDOMAIN here, and every
+            # proxied request is a 502. The namespace comes from the downward
+            # API so an overlay that renames it keeps working.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: PROTEOS_API_UPSTREAM
+              value: proteos-controlplane.$(POD_NAMESPACE).svc.cluster.local:8080
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi

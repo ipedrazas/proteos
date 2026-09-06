@@ -14,6 +14,7 @@ resources:
   - rbac.yaml
   - service.yaml
   - deployment.yaml
+  - pdb.yaml
   - networkpolicy.yaml
   # runtimeclass-gvisor.yaml is an EXAMPLE: a RuntimeClass names a handler that
   # must already be installed on the nodes, and on GKE the Sandbox feature

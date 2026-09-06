@@ -89,6 +89,8 @@ A fleet can mix backends; the control plane sees each one as a host row.
 | Guest image | a baked ext4 (`image/build-rootfs.sh`) | an OCI image (`image/guest.Dockerfile`) |
 | Stop | hibernate: RAM snapshot, resume | poweroff: the volume is kept, the machine boots cold |
 | Isolation | the microVM boundary | a sandboxed RuntimeClass (gVisor/Kata) + NetworkPolicy |
+| Egress by domain | nftables, resolved at boot | NetworkPolicy, resolved at boot; on Cilium, followed live |
+| The control plane | the compose stack on an app VM | the same, or in the cluster (`deploy/kubernetes/app-stack/`) |
 
 Which backend a machine gets is decided at create time and never changes: a host
 row records its agent's driver kind (`hosts.driver`), a template names an image
