@@ -24,8 +24,11 @@ control plane ──TLS+bearer──▶ cluster-agent (Deployment, proteos-syste
 | `base/networkpolicy.yaml` | Default-deny for `proteos-machines`; the agent's own policy |
 | `base/runtimeclass-gvisor.yaml` | Example RuntimeClass (**not** applied by default — see below) |
 | `base/quota-example.yaml` | Example ResourceQuota + LimitRange for the machine namespace (**not** applied by default; copy into your overlay with your numbers) |
+| `base/networkpolicy-cilium.yaml` | **Cilium clusters only**: lets the agent reach the API server (a NetworkPolicy `ipBlock` cannot, on Cilium). Apply it with the base there |
 | `overlays/kind/` | The e2e shape: no RuntimeClass, locally-loaded images. Used by `e2e-kind.sh`, not for production |
-| `overlays/k3s/` | A self-hosted k3s cluster: LoadBalancer Service, local-path storage, k3s's CIDRs, the gvisor RuntimeClass |
+| `overlays/k3s/` | A self-hosted k3s cluster: LoadBalancer Service, local-path storage, k3s's CIDRs, the gvisor RuntimeClass, two agent replicas |
+| `base/pdb.yaml` | PodDisruptionBudget for the cluster-agent, shaped for one replica or two (K6) |
+| `app-stack/` | The control plane, Postgres, OpenBao and the web front end **inside the cluster** (K6) — see "The app stack in the cluster" |
 | `gvisor-k3s.sh` | Installs runsc on a k3s node and proves a pod really runs sandboxed |
 
 ```sh
@@ -43,6 +46,10 @@ API server:
 deploy/kubernetes/e2e-kind.sh          # create, test, tear down
 deploy/kubernetes/e2e-kind.sh --keep   # leave the cluster up to poke at
 ```
+
+With `--cni=cilium` it builds the cluster on Cilium instead of kind's CNI,
+turns the agent's FQDN engine on, and runs the FQDN egress test as well (see
+"FQDN egress"); that needs the `cilium` CLI and is not the CI job.
 
 It is a **functional** test, not a sandbox test — kind has no gVisor, so the
 overlay disables the RuntimeClass. What it does prove is the part unit tests
@@ -92,6 +99,13 @@ some managed defaults) the objects are accepted and silently do nothing.
 Calico, Cilium, Antrea, kube-router, GKE Dataplane V2 and kind ≥ 0.24 all
 enforce it.
 
+On **Cilium** apply `base/networkpolicy-cilium.yaml` as well, or the agent
+never becomes ready: Cilium does not match a NetworkPolicy `ipBlock` against
+the cluster's own nodes, so the agent's API-server egress rule grants nothing
+there and only a `CiliumNetworkPolicy` with `toEntities: [kube-apiserver]`
+can. The symptom is an agent pod that restarts with an empty log, and
+`Policy denied … ->host … :6443` in `cilium monitor --type drop`.
+
 The agent checks this itself at startup rather than trusting a list: it creates
 a canary pod in `proteos-machines`, reaches it while a policy permits the
 connection, rewrites the policy to deny all ingress, and **refuses to start if
@@ -133,7 +147,12 @@ non-RFC1918 range.
 machines from a capacity figure the agent synthesizes; nothing inside the
 cluster caps the namespace unless you do. `base/quota-example.yaml` is the
 shape; the numbers are yours. Machine pods and the preflight canary always
-declare requests and limits, so a compute quota is safe to apply.
+declare requests and limits, so a compute quota is safe to apply. The agent
+also reads the quota (K6): the capacity it advertises is the sum of the nodes
+present, capped by the quota's `limits.cpu`, `limits.memory` and
+`requests.storage` when one exists — so the control plane is never told more
+than the namespace may use, and disk, which nodes cannot report, gets a real
+bound. On an autoscaled node pool see "Autoscaling".
 
 Pod Security admission on `proteos-machines` is `enforce: baseline`, with
 `restricted` at audit/warn. It cannot be `restricted`: the guest runs as root
@@ -259,6 +278,149 @@ placed on, and `POST /api/machines` answers `503 no_capacity` naming the
 backends the template needs. Neither is a cluster fault — both mean the catalog
 and the fleet disagree.
 
+## Two cluster-agent replicas
+
+One replica is enough. Two survive a node drain or a bad node without the
+control plane seeing the host go away, and roll with no gap:
+
+```yaml
+# in your overlay
+patches:
+  - target: {kind: Deployment, name: proteos-cluster-agent}
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 2
+```
+
+The `overlays/k3s` overlay already does this. It works because every driver
+method is idempotent and the API server holds all the state — the control
+plane dials the one Service and does not care which pod answers. The one fact
+a replica used to know alone, "I am in the middle of ensuring this machine",
+is stamped on the machine's NetworkPolicy (`proteos.io/ensured-at`) for the
+duration of the ensure, so a status poll that lands on the OTHER replica
+between the volume and the pod being created says `creating` rather than the
+`stopped` the control plane would read as a failed boot. Each replica runs its
+own startup NetworkPolicy canary (budget one canary pod per replica in a
+`ResourceQuota`), and the PodDisruptionBudget in `base/` (`maxUnavailable: 1`)
+lets a drain move them one at a time without ever making a single replica
+undrainable.
+
+## FQDN egress
+
+`allow_domains` / `deny_domains` are, on this backend, an **IP snapshot**: the
+domains are resolved when the machine is ensured and written into its
+NetworkPolicy as `/32` blocks, because Kubernetes NetworkPolicy is IP-based.
+A name that moves is not followed; a name behind a rotating pool is only
+partly covered; a wildcard cannot be expressed at all. That is the same
+limitation the Firecracker driver's nftables sets have.
+
+On a **Cilium** cluster the agent can do better (K6). With
+
+```yaml
+- name: PROTEOS_K8S_FQDN_POLICY
+  value: cilium
+```
+
+every `allow_domains` machine also gets a `CiliumNetworkPolicy` beside its
+NetworkPolicy: a DNS rule that turns Cilium's transparent DNS proxy on for the
+pod, and one `toFQDNs` entry per domain — `matchName` for a plain name,
+`matchPattern` for a `*.` wildcard — so the policy follows whatever the
+machine's own lookups return, for as long as the answer's TTL says. The
+snapshot NetworkPolicy is still written (Cilium unions every policy that
+selects a pod), so nothing is lost if the proxy has not seen a lookup yet.
+The agent refuses to start if the CRD is not served, and the Role in `base/`
+already grants `ciliumnetworkpolicies` (a rule for an API group the server
+does not have grants nothing, so it is harmless elsewhere).
+
+What it does **not** lift: `deny_domains` stays a snapshot on every CNI —
+Cilium's deny rules do not accept `toFQDNs`, and the open-source Calico has no
+DNS policy at all (it is an Enterprise feature). Turning the engine off later
+does not remove the objects it wrote; a machine's leaves with Destroy, and
+`kubectl -n proteos-machines delete ciliumnetworkpolicies -l
+app.kubernetes.io/managed-by=proteos` removes the rest.
+
+Note that the control plane's domain validation accepts bare hostnames only
+today; a wildcard reaches the agent only through the agent API directly. The
+e2e uses that to prove the engine is really following names rather than
+replaying a snapshot: a machine allowed `*.github.com` — which the snapshot
+resolves to nothing — reaches `api.github.com`, and not `example.com`.
+
+## Autoscaling
+
+Machine pods carry requests and limits, so the cluster autoscaler and
+Karpenter both scale a node pool up for them out of the box. Two things the
+driver does for the way DOWN:
+
+- Every machine pod carries `cluster-autoscaler.kubernetes.io/safe-to-evict:
+  "false"` and `karpenter.sh/do-not-disrupt: "true"`. To an autoscaler a bare
+  pod with a PVC is evictable; to ProteOS it is someone's running session, and
+  on a node-local StorageClass it cannot come back elsewhere. A node with a
+  running machine on it is therefore never consolidated away; a stopped
+  machine has no pod and constrains nothing.
+- The capacity the agent advertises is, by default, the nodes PRESENT. On a
+  pool the autoscaler grows on demand that is what the pool has grown to, not
+  what it can hold — and a pool scaled to zero would advertise nothing and
+  never be given the machine that makes it grow. Set
+  `PROTEOS_K8S_CAPACITY_FROM_QUOTA=1` and apply a `ResourceQuota` bounding
+  `limits.cpu`, `limits.memory` and `requests.storage`: the quota then IS the
+  advertised capacity, which is what an operator means by "how big may this
+  pool get". (This only matters when the control plane has more than one host
+  to rank; with a single host it never asks.)
+
+## The app stack in the cluster
+
+`app-stack/` runs the rest of ProteOS — Postgres, OpenBao with its
+auto-unsealer, the control plane, and the web front end — in `proteos-system`
+beside the cluster-agent (K6). It is `deploy/app-stack/compose.yaml` expressed
+as Kubernetes objects with the same images and the same environment, plus the
+two things a cluster makes possible: the control plane dials the cluster-agent
+by Service name over the pod network, and it reads the agent's token and
+certificate **from the agent's own Secret**, so the two can never disagree.
+The session export directory (TAV-141) lands on the control plane's data PVC.
+
+```sh
+# 1. The cluster-agent first (above) — its Secret is the control plane's too.
+# 2. The app stack's secrets. ZITADEL_*/GITHUB_* may be added later; without
+#    them the control plane serves /healthz and 401s the API, as compose does.
+kubectl -n proteos-system create secret generic proteos-controlplane \
+  --from-literal=POSTGRES_PASSWORD="$(openssl rand -hex 16)" \
+  --from-literal=PROTEOS_STATE_KEY="$(openssl rand -hex 32)" \
+  --from-literal=ZITADEL_DOMAIN=auth.example.com --from-literal=ZITADEL_CLIENT_ID=... \
+  --from-literal=GITHUB_APP_CLIENT_ID=... --from-literal=GITHUB_APP_CLIENT_SECRET=...
+# 3. Copy app-stack/overlays/k3s, set PROTEOS_BASE_URL and PROTEOS_IMAGE_REF,
+#    pin the api/ui images, and apply it.
+kubectl apply -k deploy/kubernetes/app-stack/overlays/k3s/
+kubectl -n proteos-system get svc proteos-web     # the address for PROTEOS_BASE_URL
+```
+
+The control plane pod restarts once or twice on a first apply while Postgres
+comes up (compose's `depends_on` is the kubelet's backoff here). OpenBao boots
+sealed and unused: the control plane starts on its file backend, exactly as
+the compose stack does until `openbao-init.sh` has run. Run it against a
+port-forward (`kubectl -n proteos-system port-forward svc/proteos-openbao
+8200:8200`), then put the unseal key and the AppRole secret_id where the
+manifests look for them and switch the backend:
+
+```sh
+kubectl -n proteos-system create secret generic proteos-openbao-unseal --from-file=unseal-key=bao-unseal-key
+kubectl -n proteos-system create secret generic proteos-openbao-approle --from-file=secret-id=openbao-secret-id
+# then PROTEOS_SECRETS_BACKEND=openbao and PROTEOS_OPENBAO_ROLE_ID in your overlay's ConfigMap, and re-apply
+```
+
+Everything else in RUNBOOK Part D applies unchanged. The web Service is a
+LoadBalancer in the k3s overlay and a ClusterIP in the base — put an Ingress
+that terminates TLS in front of it on a cluster that has one, and remember the
+editor/preview origins need the wildcard record and certificate from
+DEPLOYMENT.md. Exposure of the *agent* is no longer needed at all when the
+control plane is in the cluster; `overlays/k3s`'s LoadBalancer for it is only
+for a control plane outside.
+
+`controlplane/internal/httpapi/incluster_e2e_test.go` drives a deployed stack
+as a browser would (a seeded session, the JSON API through the web tier, the
+terminal WebSocket): `PROTEOS_E2E_CP_URL`, `PROTEOS_E2E_CP_DATABASE_URL` and
+`PROTEOS_E2E_CP_ORIGIN` against two port-forwards.
+
 ## Known differences from a Firecracker host
 
 | | Firecracker | Kubernetes |
@@ -266,5 +428,5 @@ and the fleet disagree.
 | Isolation | microVM (own kernel) | sandboxed runtime, or the node's kernel |
 | Hibernate | RAM snapshot, resume | poweroff; the volume is kept, the machine boots cold. Stop moves the machine through `stopping`, not `hibernating`, and the console hides the snapshot field |
 | Encryption at rest | per-machine LUKS key | StorageClass |
-| Egress policy | nftables on the tap | NetworkPolicy, IP snapshot (no live FQDN) |
+| Egress policy | nftables on the tap | NetworkPolicy, IP snapshot; on Cilium, `allow_domains` follows names live (`PROTEOS_K8S_FQDN_POLICY=cilium`) |
 | Inbound SSH | sshd under systemd | sshd as a sidecar container in the machine pod, on the pod's loopback |

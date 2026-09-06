@@ -3,16 +3,20 @@
 > Source: request to "delegate the execution of a remote agent to a Kubernetes
 > cluster" (2026-09-04). Feature work off the master-plan numbering, like
 > `port-preview` and `multi-machine`; stages labelled **K0–K6**.
-> Status: **K0–K5 implemented** (K5: 2026-09-05). K0–K4 were verified end to
+> Status: **K0–K6 implemented** (K6: 2026-09-06). K0–K4 were verified end to
 > end on a real multi-node k3s cluster with gVisor and a policy-enforcing CNI —
 > see "What a production-shaped cluster found". K5 closed the one K2 promise
 > that had been quietly dropped (the agent now PROVES its CNI enforces policy
 > before it serves), put a second, CNI-independent control on the guest's
 > listeners, and stood a control plane up inside the kind job. The dm-crypt
-> option was dropped — see the K5 notes for why. K6 not started. See
-> "Implementation notes" at the end for where the build departed from this
-> plan, and "What the kind e2e found" for the bugs that only a real API server
-> could surface.
+> option was dropped — see the K5 notes for why. K6 delivered all four "later"
+> items: two-replica cluster-agents (the "already works" claim turned out to
+> need one fix), the app stack in the cluster, quota-aware capacity and
+> eviction protection for autoscaled pools, and FQDN egress on Cilium — see
+> the K6 notes, including the one Cilium fact that stops the agent starting
+> at all. See "Implementation notes" at the end for where the build departed
+> from this plan, and "What the kind e2e found" for the bugs that only a real
+> API server could surface.
 
 ## TL;DR
 
@@ -417,14 +421,22 @@ domain resolution reuse), `guest.go` (`DialGuest`), `capacity.go`.
 
 ### K6 — Later
 
+> Landed 2026-09-06. See the K6 implementation notes below.
+
 - FQDN-based egress via Cilium/Calico DNS policies (replaces the IP snapshot).
+  **Cilium only, `allow_domains` only** — Calico's DNS policy is an Enterprise
+  feature and Cilium's deny rules take no FQDNs; the snapshot stays for
+  everything else, and the CiliumNetworkPolicy is written beside it.
 - Control plane + Postgres + OpenBao in-cluster (needs a PVC for
   `sessionexport`, and the CP's single-instance gateway `Registry` is unchanged).
 - Cluster-agent HA (leader election is unnecessary since the API server is the
   state, but the CP dials one URL; a 2-replica Deployment behind the Service
-  already works because every method is idempotent).
+  already works because every method is idempotent). **Not quite** — see the
+  notes: one fact lived in process memory, and the second replica could not
+  see it.
 - Autoscaling / scale-to-zero of machine nodes (Karpenter/cluster-autoscaler
-  works out of the box once pods carry requests).
+  works out of the box once pods carry requests). Scale-**up** does; the
+  driver had to be taught two things about scale-down and scale-to-zero.
 
 ---
 
@@ -801,3 +813,153 @@ together; `PROTEOS_K8S_GUEST_AUTH=0` is the bridge for a fleet that cannot.
    the earlier e2e comments had assumed without saying so. It means the probe
    is asserted in CI for free, and that every earlier kind run had in fact
    been exercising enforced policies.
+
+## Implementation notes (K6, 2026-09-06)
+
+All four "later" items. Verified on the three-node k3s cluster (gVisor,
+kube-router) with the branch's agent and web images imported into `k3s ctr`:
+the driver suite through a two-replica agent, a two-replica experiment of its
+own, the quota capacity reading, and the whole app stack deployed in the
+cluster and driven as a browser would; and on a kind cluster running Cilium
+1.20 for the FQDN engine, which no other CNI the project has access to can
+exercise.
+
+### Departures from the plan
+
+1. **"A 2-replica Deployment already works" was almost true.** Every method
+   is idempotent and the API server is the record, as the plan said — except
+   for the one fact K5 had put in process memory: "an ensure for this machine
+   is in flight", which is what stops a status poll that lands between the
+   volume and the pod from reading as a stopped machine. Behind one Service
+   that poll lands on the OTHER replica, which has never heard of the ensure.
+   The fact is now also stamped on the machine's NetworkPolicy
+   (`proteos.io/ensured-at`) — the first object an ensure writes, rewritten on
+   every ensure anyway, gone with Destroy — for exactly the duration of the
+   ensure, and cleared by the ensure that wrote it (only ITS stamp, so a
+   concurrent ensure's survives) or by a Stop. A stamp nobody cleared (an
+   agent that died mid-ensure) expires after twice the delete-wait plus 30 s.
+   The in-process map stays: it is exact, free, and covers the instant before
+   the stamp lands. The ensure order changed to make the stamp the first
+   observable write (policy, PVC, Secret, pod — it was PVC first).
+2. **The token cache needed nothing.** It is a read-through cache of a Secret
+   keyed by pod UID, so a second replica simply reads the Secret once. The
+   other per-process state — the capacity cache, the canary — is per-replica
+   by nature; two replicas mean two canaries at startup, which the quota
+   example now budgets for.
+3. **Capacity reads the ResourceQuota, two ways.** The plan mentioned a quota
+   as an alternative source of the figure; the autoscaling item is what made
+   it necessary. By default a quota CAPS the node sum per resource (nodes say
+   what is present, the quota what may be used, the control plane is told the
+   smaller) and supplies the disk total nodes cannot. With
+   `PROTEOS_K8S_CAPACITY_FROM_QUOTA=1` the quota IS the total: on an
+   autoscaled pool the nodes present are what it has grown to, and a pool
+   scaled to zero would otherwise advertise nothing and never be given the
+   machine that makes it grow. Observed on k3s: no quota → the nodes (12
+   vcpus); a quota above the nodes → the nodes plus the quota's disk; a quota
+   below → the quota. `limits.cpu` rather than `requests.cpu` for vcpus,
+   because a machine's vcpu count IS its limit and its request carries the
+   oversubscription ratio the control plane knows nothing about.
+4. **Scale-down protection is two annotations.** To the cluster autoscaler and
+   Karpenter a bare pod with a PVC is evictable; to ProteOS it is a running
+   session, and on a node-local StorageClass it cannot come back elsewhere.
+   Machine pods carry `safe-to-evict: "false"` and `do-not-disrupt: "true"`;
+   a stopped machine has no pod and constrains nothing.
+5. **The app stack is the compose file, translated, with two improvements the
+   platform allows.** The control plane dials the agent by Service name over
+   the pod network (the certificate already named it), and it reads the
+   agent's token and certificate FROM THE AGENT'S OWN SECRET — one copy of
+   each, so the two sides cannot disagree the way two `.env` files can.
+   `sessionexport` writes to the control plane's data PVC. The web image
+   needed one change to serve both stacks: its nginx.conf became an nginx
+   entrypoint template, with the resolver and the upstream as two
+   `PROTEOS_*` variables whose defaults render the compose config byte for
+   byte (verified by diff). The SPA build stage runs on `$BUILDPLATFORM`,
+   because a vite build under amd64 emulation on an arm64 laptop is not a
+   reasonable way to test a manifest.
+6. **FQDN egress is Cilium and `allow_domains` only**, written as unstructured
+   objects through the dynamic client (Cilium's Go API module is most of
+   Cilium). The CiliumNetworkPolicy carries a DNS rule with an L7 `dns`
+   section — that is the switch that makes Cilium observe the pod's lookups;
+   without it `toFQDNs` matches nothing — and one entry per domain,
+   `matchName` or `matchPattern` for a `*.` wildcard. The snapshot
+   NetworkPolicy is still written, so nothing depends on the proxy having seen
+   a lookup yet. `deny_domains` cannot be lifted on any CNI available:
+   Cilium's deny rules do not accept `toFQDNs`, and open-source Calico has no
+   DNS policy at all. The control plane's domain validation does not accept
+   wildcards yet, so today a wildcard reaches the agent only through its API
+   directly — which is how the e2e proves liveness (below). Widening the
+   validation is a small follow-up, deliberately not bundled here.
+7. **The FQDN e2e proves the engine rather than exercising it.** Allowing
+   `github.com` and reaching it proves nothing — the snapshot does that. The
+   machine is allowed `*.github.com`, which the snapshot resolves to NOTHING
+   (a wildcard does not resolve), so reaching `api.github.com` from inside it
+   can only be Cilium following the name; `example.com` is the control that
+   must time out.
+
+### What a Cilium cluster found
+
+1. **The cluster-agent cannot start on Cilium without a CiliumNetworkPolicy of
+   its own.** Its NetworkPolicy permits egress to the API server with an
+   `ipBlock 0.0.0.0/0` — the only way a Kubernetes NetworkPolicy can name an
+   address outside the pod network. Cilium does not match CIDR rules against
+   the cluster's own nodes; the API server carries the `host` /
+   `kube-apiserver` identity, and only `toEntities` can name it. The agent's
+   first API call was dropped, its preflight never finished, the pod never
+   became ready, and its log was EMPTY — the client blocks before the agent
+   logs anything. `cilium monitor --type drop` said it in one line
+   (`identity → host … :6443 Policy denied`). `base/networkpolicy-cilium.yaml`
+   is the fix and the README says to apply it on any Cilium cluster, FQDN
+   engine or not. This would have bitten the first operator to try Cilium
+   whatever K6 did, and nothing in the K2–K5 verification could have found it:
+   kind's CNI and kube-router both match `ipBlock` against nodes.
+2. **kind's default CNI cannot be swapped after the fact**, so the script's
+   `--cni=cilium` creates the cluster without one (`disableDefaultCNI`) and
+   installs Cilium before anything else; the node is not Ready until then, so
+   `kind create --wait` cannot be used on that path.
+3. **`--reuse` had two bugs of its own**, found because the Cilium runs were
+   the first to reuse a cluster three times in a row: the script mints a new
+   token and rewrites the Secret on every run but nothing restarted the pods
+   that had the old one in their environment (every request was a 401), and
+   the probe-verdict check read `kubectl logs deploy/`, which after a rollout
+   can pick a Terminating pod from the previous ReplicaSet and lose it
+   mid-call (a healthy agent reported as "came up without verifying"). It now
+   restarts the Deployment on reuse, waits for old pods to go, and reads the
+   logs by label.
+
+With those, the full run on Cilium 1.20: the six driver tests, the FQDN test,
+and both control-plane tests pass, and the leak check (now including
+CiliumNetworkPolicies) is clean.
+
+### What the deployed app stack found
+
+1. **nginx's resolver does not apply the pod's search domains.** The compose
+   config proxies to the bare name `controlplane`, which Docker's embedded DNS
+   answers; in the cluster the same bare name is NXDOMAIN at kube-dns and every
+   proxied request was a 502 with the control plane perfectly healthy. The
+   upstream is now fully qualified, with the namespace from the downward API.
+2. **`bao status` assumes https.** The compose healthcheck happens to work
+   for the same command; in the pod the readiness probe reported OpenBao down
+   for ever until `BAO_ADDR` was set for it. And a StatefulSet will not roll a
+   pod that is not Ready, so the fix needed the pod deleted by hand — recorded
+   in the runbook, because it will happen to the next person too.
+3. **The control plane crash-loops until Postgres accepts connections** (the
+   headless Service name does not even resolve until the pod is ready), where
+   compose had `depends_on: service_healthy`. Two restarts and under a minute;
+   documented rather than papered over with an init container.
+4. **MetalLB handed the web Service a node's own address** on the test
+   cluster, because its pool overlaps the node IPs. A homelab fact, not a
+   ProteOS one, but it is the kind of thing that turns a working stack into
+   "the UI does not load" — noted here for whoever deploys next.
+
+### Still open after K6
+
+- The control plane does not accept wildcard domains in a network policy, so
+  the FQDN engine's `matchPattern` is reachable only through the agent API.
+- The Cilium e2e is not the CI job (Cilium adds minutes and a CLI to a
+  runner); it is `e2e-kind.sh --cni=cilium`, run by hand.
+- Two cluster-agent replicas do not serialize concurrent ensures of one
+  machine across replicas. The one write that is not idempotent — rotating the
+  guest Secret on the pod-create path — races only if a second ensure passes
+  the pod Get before the first's pod Create and then stalls past the
+  container's start, which the control plane's state machine never produces
+  (one ensure per transition, retries only after the previous poll failed).

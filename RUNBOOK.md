@@ -874,6 +874,12 @@ misbehaves.
 | Cluster-agent crash-loops with `the canary pod was never reachable` | The probe could not even run its control: the canary image did not start (`kubectl -n proteos-machines get pods -l app.kubernetes.io/component=netpol-canary`, usually `ImagePullBackOff` on `registry.k8s.io` — set `PROTEOS_K8S_NETPOL_PROBE_IMAGE`), or pod-to-pod traffic from the agent is blocked outright, in which case machines would be unreachable too |
 | Machine `creating` forever, guest logs full of `authlisten: rejected connection` | The guest image predates the listener preamble, so the readiness probe (which presents it) and every dial are refused. Upgrade the image, or set `PROTEOS_K8S_GUEST_AUTH=0` on the agent until you can |
 | Terminal `502` on a machine that is `running`, agent log says `read guest secret … not found` | The machine's `m-<id8>-guest` Secret is gone. Nothing but Destroy deletes it, so something else did; stop and start the machine to mint a new one |
+| A machine reports `creating` with no pod, for minutes, after nothing happened | The ensure marker (`proteos.io/ensured-at` on the machine's NetworkPolicy, K6) was left by a cluster-agent that died mid-ensure. It expires on its own (about three minutes, or twice the delete-wait plus 30 s); a Stop clears it at once |
+| Cluster-agent refuses to start with `PROTEOS_K8S_FQDN_POLICY=cilium but the API server does not serve cilium.io/v2` | The FQDN engine is configured on a cluster without Cilium. Unset it (the IP snapshot still works everywhere), or install Cilium |
+| `allow_domains` machine can resolve a name but not reach it, on Cilium with the engine on | `kubectl -n proteos-machines get ciliumnetworkpolicy m-<id8> -o yaml` — is the DNS rule's `rules.dns` present and does `toFQDNs` list the name? Then `cilium monitor --type drop` from the Cilium agent on that node. A name the machine never LOOKED UP through the cluster resolver (a hard-coded IP, DoH) is not followed by design |
+| Capacity advertised to the control plane is lower than the nodes' sum | A `ResourceQuota` in `proteos-machines` caps it (K6) — `kubectl -n proteos-machines get resourcequota`. That is the intended reading of a quota; raise the quota, not the agent |
+| An autoscaled pool never scales up for machines; the control plane says `no_capacity` | The agent advertises the nodes PRESENT; a pool at zero advertises zero. Set `PROTEOS_K8S_CAPACITY_FROM_QUOTA=1` with a `ResourceQuota` that bounds cpu, memory and storage — the agent logs the figures it will advertise at startup |
+| The autoscaler will not remove an idle node | A running machine is on it: machine pods carry `safe-to-evict: "false"` / `do-not-disrupt` on purpose. Stop the machine and the node drains |
 
 **NetworkPolicy troubleshooting.** Machine ingress is restricted to the
 cluster-agent pod, so the first question is always whether the policy is being
@@ -904,7 +910,35 @@ the handler does not on that node.
 **Agent restarts are free.** The API server holds all the state: the
 cluster-agent keeps nothing on disk and finds the fleet again by label, so
 `kubectl -n proteos-system rollout restart deploy/proteos-cluster-agent` does not
-disturb a single running machine.
+disturb a single running machine. With two replicas (the k3s overlay's default,
+K6) the control plane does not even see the restart; each replica runs its own
+startup canary, so expect two canary pods for a few seconds.
+
+**The app stack in the cluster (K6).** `deploy/kubernetes/app-stack/` runs
+Postgres, OpenBao, the control plane and the web tier in `proteos-system`. The
+compose-stack parts of this runbook (Part B for the control plane, Part D for
+OpenBao, the backup scripts) apply with the obvious substitutions —
+`kubectl -n proteos-system logs deploy/proteos-controlplane` for `docker compose
+logs controlplane`, a port-forward to `svc/proteos-openbao` for the published
+8200. Things specific to the cluster shape:
+
+- The control plane pod restarting once or twice on a first apply is Postgres
+  not accepting connections yet; a pod still crash-looping a minute later is
+  telling you something else (read its log — the usual is a template whose
+  defaults are outside the resource caps, or a database URL problem).
+- `502` from the web tier for every `/api` call while the control plane is
+  `Running` is nginx failing to resolve the upstream. Its resolver is kube-dns
+  and the upstream name must be fully qualified (the manifest does both); check
+  `kubectl -n proteos-system logs deploy/proteos-web` for `could not be
+  resolved`.
+- The control plane's host row is seeded from `controlplane.env`
+  (`PROTEOS_HOST_NAME`, `PROTEOS_HOST_DRIVER=kubernetes`,
+  `PROTEOS_NODE_AGENT_URL` = the agent's Service name). If machines fail with a
+  TLS error against the agent, the agent's certificate SAN does not include
+  `proteos-cluster-agent.proteos-system.svc` — reissue it (README quickstart).
+- OpenBao's StatefulSet will not roll a pod that is not Ready (a StatefulSet
+  waits for readiness before updating); `kubectl delete pod proteos-openbao-0`
+  unsticks it.
 
 ---
 

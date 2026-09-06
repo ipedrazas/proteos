@@ -58,7 +58,7 @@ must know precisely what differs.
 | NetworkPolicy enforcement | n/a | proved at startup by a canary the agent must fail to reach once denied; the agent refuses to start otherwise |
 | Inbound SSH | sshd under systemd, bound to 127.0.0.1 | sshd in a sidecar container, bound to the pod's 127.0.0.1 |
 | Encryption at rest | per-machine LUKS key, held by the control plane and never written to the host | the StorageClass's responsibility |
-| Egress control | nftables on the machine's tap | NetworkPolicy, from an IP snapshot taken at boot |
+| Egress control | nftables on the machine's tap | NetworkPolicy, from an IP snapshot taken at boot; on Cilium, `allow_domains` follows names live through the DNS proxy |
 | Passwordless sudo in the guest | yes | not installed in the image |
 
 What this means in practice:
@@ -103,10 +103,18 @@ What this means in practice:
   cannot become a second egress path around the machine's NetworkPolicy. Host
   keys are generated per machine on its own volume — never baked into the image,
   where every machine would share one identity.
-- **Egress policy is a snapshot.** `allow_domains` / `deny_domains` resolve to
-  addresses once, when the machine boots. A domain that later moves to a new
-  address is not followed. FQDN-aware egress needs a CNI policy engine
-  (Cilium/Calico) and is not yet implemented.
+- **Egress policy is a snapshot, unless Cilium.** `allow_domains` /
+  `deny_domains` resolve to addresses once, when the machine boots; a domain
+  that later moves is not followed. On a Cilium cluster with
+  `PROTEOS_K8S_FQDN_POLICY=cilium` the agent adds a `CiliumNetworkPolicy` whose
+  `toFQDNs` rules follow the names an `allow_domains` machine resolves, through
+  Cilium's DNS proxy — an ALLOW that is at least as narrow as the snapshot,
+  never wider, since it admits only addresses the machine's own lookups
+  returned for a listed name. `deny_domains` remains a snapshot everywhere:
+  Cilium's deny rules take no FQDNs, and open-source Calico has no DNS policy.
+  A machine that resolves a name by other means (a hard-coded address, DNS over
+  HTTPS) is not followed, by design — and cannot reach it either, because the
+  snapshot did not include it.
 
 Machine egress always denies RFC1918, loopback and link-local — including
 `169.254.169.254`, so a machine cannot read the node's cloud-metadata
