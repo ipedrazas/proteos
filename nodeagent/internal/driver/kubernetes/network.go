@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -320,6 +321,16 @@ func (d *Driver) resolveDomains(ctx context.Context, domains []string) []string 
 	seen := make(map[string]struct{})
 	var out []string
 	for _, domain := range domains {
+		if strings.HasPrefix(domain, "*.") {
+			// A pattern has no addresses to snapshot. It is followed by the
+			// FQDN engine (fqdn.go) where one is configured; here it would
+			// only produce a resolver error that reads like a broken name.
+			if !d.fqdnEnabled() {
+				slog.Warn("kubernetes: wildcard policy domain is not followed without an FQDN engine (PROTEOS_K8S_FQDN_POLICY)",
+					"domain", domain)
+			}
+			continue
+		}
 		addrs, err := net.DefaultResolver.LookupNetIP(ctx, "ip4", domain)
 		if err != nil {
 			slog.Warn("kubernetes: could not resolve policy domain", "domain", domain, "err", err)

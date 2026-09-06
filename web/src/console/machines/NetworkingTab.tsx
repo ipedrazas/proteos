@@ -120,7 +120,7 @@ export function NetworkingTab({ machine }: { machine: MachineSummary }) {
               setError(null);
               setSaved(false);
             }}
-            placeholder={'github.com\nregistry.npmjs.org\nproxy.golang.org'}
+            placeholder={'github.com\n*.githubusercontent.com\nregistry.npmjs.org'}
             aria-label="Domains"
           />
           <span className="c-muted c-field-hint">

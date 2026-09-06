@@ -41,10 +41,33 @@ var validNetworkPolicyModes = map[string]bool{
 }
 
 // domainPattern accepts a bare DNS hostname (e.g. "github.com",
-// "api.github.com"). No scheme, path, port, or wildcard — resolution
-// (resolveDomainIPs on the node-agent) looks each name up directly, so a
-// pattern it can't look up would silently match nothing.
+// "api.github.com"). No scheme, path or port.
 var domainPattern = regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$`)
+
+// wildcardPrefix is the one pattern form accepted beyond a bare hostname: a
+// single leading `*.` label ("*.github.com"), which matches every subdomain
+// of the rest and NOT the rest itself — list "github.com" too if you want
+// it. The remainder must be a hostname of at least two labels, so "*.com" is
+// not a policy.
+//
+// A wildcard is only FOLLOWED by a backend with an FQDN-aware policy engine
+// (the Kubernetes backend on Cilium, K6). The IP-snapshot backends — the
+// Firecracker driver's nftables sets and the Kubernetes driver's plain
+// NetworkPolicy — cannot resolve a pattern and skip it, so on those a
+// wildcard-only allow list leaves the machine with DNS and nothing else.
+// The API accepts it regardless: the policy is a statement of intent about
+// the machine, and which host it lands on is not the user's decision.
+const wildcardPrefix = "*."
+
+// ValidDomain reports whether d is a domain the network policy accepts: a bare
+// hostname, or a single-level wildcard of one.
+func ValidDomain(d string) bool {
+	d = strings.TrimSpace(d)
+	if rest, ok := strings.CutPrefix(d, wildcardPrefix); ok {
+		d = rest
+	}
+	return d != "" && domainPattern.MatchString(d)
+}
 
 // NetworkPolicy is the API/service-level view of a machine's network policy
 // (TAV-116). Domains is meaningful only for the two domain-list modes.
@@ -63,7 +86,7 @@ func defaultNetworkPolicy(machineID string) NetworkPolicy {
 
 // ValidateNetworkPolicy checks a mode/domains pair before it is persisted: mode
 // must be one of the four constants, and (only for the domain-list modes)
-// every domain must look like a bare DNS hostname.
+// every domain must be a bare DNS hostname or a `*.` wildcard of one.
 func ValidateNetworkPolicy(mode string, domains []string) error {
 	if !validNetworkPolicyModes[mode] {
 		return fmt.Errorf("%w: unknown mode %q", ErrInvalidNetworkPolicy, mode)
@@ -72,9 +95,9 @@ func ValidateNetworkPolicy(mode string, domains []string) error {
 		return nil
 	}
 	for _, d := range domains {
-		d = strings.TrimSpace(d)
-		if d == "" || !domainPattern.MatchString(d) {
-			return fmt.Errorf("%w: invalid domain %q", ErrInvalidNetworkPolicy, d)
+		if !ValidDomain(d) {
+			return fmt.Errorf("%w: invalid domain %q (want a hostname like api.github.com, or *.github.com)",
+				ErrInvalidNetworkPolicy, strings.TrimSpace(d))
 		}
 	}
 	return nil

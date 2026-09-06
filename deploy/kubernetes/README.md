@@ -340,11 +340,14 @@ does not remove the objects it wrote; a machine's leaves with Destroy, and
 `kubectl -n proteos-machines delete ciliumnetworkpolicies -l
 app.kubernetes.io/managed-by=proteos` removes the rest.
 
-Note that the control plane's domain validation accepts bare hostnames only
-today; a wildcard reaches the agent only through the agent API directly. The
-e2e uses that to prove the engine is really following names rather than
-replaying a snapshot: a machine allowed `*.github.com` — which the snapshot
-resolves to nothing — reaches `api.github.com`, and not `example.com`.
+A policy may list a single-level wildcard (`*.githubusercontent.com`): it
+matches every subdomain, not the bare name, and only an FQDN engine follows
+it — the snapshot backends (Firecracker, or this one without the engine)
+skip a wildcard with a warning, so a wildcard-only allow list there leaves a
+machine with DNS and nothing else. The e2e uses exactly that to prove the
+engine is really following names rather than replaying a snapshot: a
+machine allowed `*.github.com` reaches `api.github.com`, and not
+`example.com`.
 
 ## Autoscaling
 

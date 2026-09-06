@@ -55,7 +55,7 @@ export function NetworkPolicyPanel({ machineId }: { machineId: string }) {
 
   const saveError =
     setPolicy.error instanceof ApiError && setPolicy.error.code === 'invalid_network_policy'
-      ? 'Check the domain list — one of the entries looks malformed (plain hostnames only, e.g. github.com).'
+      ? 'Check the domain list — one of the entries looks malformed (hostnames like github.com, or a wildcard like *.github.com).'
       : 'Could not save the network policy.';
 
   return (

@@ -885,10 +885,12 @@ exercise.
    NetworkPolicy is still written, so nothing depends on the proxy having seen
    a lookup yet. `deny_domains` cannot be lifted on any CNI available:
    Cilium's deny rules do not accept `toFQDNs`, and open-source Calico has no
-   DNS policy at all. The control plane's domain validation does not accept
-   wildcards yet, so today a wildcard reaches the agent only through its API
-   directly — which is how the e2e proves liveness (below). Widening the
-   validation is a small follow-up, deliberately not bundled here.
+   DNS policy at all. The control plane's domain validation now accepts a
+   single leading `*.` label (and rejects `*.com`, `a.*.b`, `*api.x`); the
+   snapshot resolvers on both backends skip a wildcard with a warning rather
+   than reporting a name that failed to resolve. The policy is accepted
+   whatever host the machine is on: it states intent about the machine, and
+   the host is not the user's decision.
 7. **The FQDN e2e proves the engine rather than exercising it.** Allowing
    `github.com` and reaching it proves nothing — the snapshot does that. The
    machine is allowed `*.github.com`, which the snapshot resolves to NOTHING
@@ -953,8 +955,6 @@ CiliumNetworkPolicies) is clean.
 
 ### Still open after K6
 
-- The control plane does not accept wildcard domains in a network policy, so
-  the FQDN engine's `matchPattern` is reachable only through the agent API.
 - The Cilium e2e is not the CI job (Cilium adds minutes and a CLI to a
   runner); it is `e2e-kind.sh --cni=cilium`, run by hand.
 - Two cluster-agent replicas do not serialize concurrent ensures of one

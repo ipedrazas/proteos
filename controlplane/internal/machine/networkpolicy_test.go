@@ -27,6 +27,14 @@ func TestValidateNetworkPolicy(t *testing.T) {
 		{"allow_domains bad domain", machine.NetworkPolicyAllowDomains, []string{"not a domain"}, true},
 		{"allow_domains url not hostname", machine.NetworkPolicyAllowDomains, []string{"https://github.com"}, true},
 		{"deny_domains blank entry", machine.NetworkPolicyDenyDomains, []string{"github.com", "  "}, true},
+		// A single leading wildcard label is a policy (followed live by an
+		// FQDN-aware backend, skipped by the snapshot ones); anything else
+		// with a star is not.
+		{"allow_domains wildcard", machine.NetworkPolicyAllowDomains, []string{"*.github.com", "*.githubusercontent.com"}, false},
+		{"wildcard needs two labels under it", machine.NetworkPolicyAllowDomains, []string{"*.com"}, true},
+		{"wildcard only leads", machine.NetworkPolicyAllowDomains, []string{"api.*.github.com"}, true},
+		{"wildcard is one label", machine.NetworkPolicyAllowDomains, []string{"*api.github.com"}, true},
+		{"double wildcard", machine.NetworkPolicyAllowDomains, []string{"*.*.github.com"}, true},
 		// A non-domain mode ignores whatever is in domains — it isn't persisted
 		// meaningfully, so garbage there shouldn't block allow_all/deny_all.
 		{"allow_all ignores garbage domains", machine.NetworkPolicyAllowAll, []string{"not a domain"}, false},
