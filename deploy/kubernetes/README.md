@@ -30,6 +30,7 @@ control plane ──TLS+bearer──▶ cluster-agent (Deployment, proteos-syste
 | `base/pdb.yaml` | PodDisruptionBudget for the cluster-agent, shaped for one replica or two (K6) |
 | `app-stack/` | The control plane, Postgres, OpenBao and the web front end **inside the cluster** (K6) — see "The app stack in the cluster" |
 | `gvisor-k3s.sh` | Installs runsc on a k3s node and proves a pod really runs sandboxed |
+| `install-k3s.sh` | The whole install on an existing k3s cluster — the sandbox, the secrets, the cluster-agent and the app stack — in one idempotent run |
 
 ```sh
 kubectl apply -k deploy/kubernetes/base/
@@ -163,8 +164,29 @@ be exempted there; that is an API-server setting, not a namespace label.
 
 ## Quickstart: a self-hosted k3s cluster
 
-The five steps, in the order they have to happen. Everything here is explained
-in the sections that follow.
+`install-k3s.sh` does all of it — the sandbox, the secrets, the cluster-agent
+and the app stack — in one idempotent run against a cluster your kubeconfig
+already reaches:
+
+```sh
+deploy/kubernetes/install-k3s.sh \
+    --base-url http://192.0.2.10 \
+    --guest-image ghcr.io/tavon-ai/proteos-guest:base-1.2.3 \
+    --app-tag sha-abc1234 \
+    --ghcr-user <github-user> --ghcr-token <PAT with read:packages> \
+    --install-gvisor --ssh-user <node user>
+```
+
+It writes this site's overlays and the material it invents (the agent key pair
+and token, the database password, the state key) into `site/`, which is
+gitignored: that directory is the record of the install, and a re-run reuses
+it. `--dry-run` shows what it would do and changes nothing; `--skip-app-stack`
+installs only the cluster-agent, for a control plane outside the cluster; and
+it prints what is left afterwards — OpenBao, the IdP and GitHub App
+credentials, TLS. `--help` lists the rest.
+
+The manual path is below: the same five steps, in the order they have to
+happen. Everything here is explained in the sections that follow.
 
 ```sh
 # 1. The sandbox, on every node machine pods may run on. Machines are NOT safe
