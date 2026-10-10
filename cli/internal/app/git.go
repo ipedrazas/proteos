@@ -6,7 +6,7 @@ import (
 	"io"
 	"text/tabwriter"
 
-	"github.com/tavon-ai/proteos/cli/internal/client"
+	"github.com/ipedrazas/proteos/cli/internal/client"
 )
 
 func runGit(env Env, args []string) int {

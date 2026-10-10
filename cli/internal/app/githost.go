@@ -7,7 +7,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/tavon-ai/proteos/cli/internal/client"
+	"github.com/ipedrazas/proteos/cli/internal/client"
 )
 
 // runGitHosts is the `proteos git hosts` family (Gitea/Forgejo phase 2):

@@ -246,7 +246,7 @@ code-server and preview over TCP. Proves the guest side before any cluster.
   pinned sha256, Node + provider CLIs, `dev` user uid 1000, `profile.d`
   providers snippet, managed Claude settings, `/etc/proteos-release`). Use
   `ARG TEMPLATE` to layer the language toolchains and produce one tag per
-  template: `ghcr.io/tavon-ai/proteos-guest:<template>-<version>`.
+  template: `ghcr.io/ipedrazas/proteos-guest:<template>-<version>`.
   Extract the apt/npm/claude install steps of `build-rootfs.sh` into shell
   fragments both builds can source, so the two images can't drift.
 - **Entrypoint**: guest-agent as PID 1, env:
@@ -316,7 +316,7 @@ domain resolution reuse), `guest.go` (`DialGuest`), `capacity.go`.
 
 - **`deploy/node-agent/node-agent.Dockerfile`**: distroless static, same shape as
   the CP image, entrypoint `proteos-node-agent`. Publish as
-  `ghcr.io/tavon-ai/proteos-node-agent`.
+  `ghcr.io/ipedrazas/proteos-node-agent`.
 - **`deploy/kubernetes/`** — plain manifests first (kustomize), Helm only if the
   value surface grows: Namespace `proteos-machines`; ServiceAccount; Role
   (pods/pvcs/networkpolicies CRUD + pods/status get in the namespace) and a

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	guestwire "github.com/tavon-ai/proteos/guestagent/api"
-	"github.com/tavon-ai/proteos/guestagent/internal/runas"
+	guestwire "github.com/ipedrazas/proteos/guestagent/api"
+	"github.com/ipedrazas/proteos/guestagent/internal/runas"
 )
 
 func newClaudeTestManager(t *testing.T) (*Manager, string) {

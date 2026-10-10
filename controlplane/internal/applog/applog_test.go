@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/applog"
+	"github.com/ipedrazas/proteos/controlplane/internal/applog"
 )
 
 func TestStore_RingBufferEviction(t *testing.T) {

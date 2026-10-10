@@ -23,7 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
 )
 
 // MaxLabelLen / MaxPublicKeyLen bound an accepted key (defensive; a real

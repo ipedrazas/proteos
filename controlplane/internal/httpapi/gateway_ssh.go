@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/gateway"
-	"github.com/tavon-ai/proteos/controlplane/internal/machine"
+	"github.com/ipedrazas/proteos/controlplane/internal/gateway"
+	"github.com/ipedrazas/proteos/controlplane/internal/machine"
 )
 
 // handleGatewaySSH authenticates (via requireAuth), resolves and authorizes the

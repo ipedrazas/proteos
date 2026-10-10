@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/audit"
-	"github.com/tavon-ai/proteos/controlplane/internal/sshkeys"
+	"github.com/ipedrazas/proteos/controlplane/internal/audit"
+	"github.com/ipedrazas/proteos/controlplane/internal/sshkeys"
 )
 
 // sshLoginKeyView is one row of GET/POST /api/ssh-keys: metadata only — the

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 // HostConfig identifies one additional host beyond the primary
@@ -181,7 +181,7 @@ type Config struct {
 
 	// ImageRef (PROTEOS_IMAGE_REF) is the OCI image the synthesized "base"
 	// template boots on a kubernetes host (K3), e.g.
-	// ghcr.io/tavon-ai/proteos-guest:base-1.2.3. Empty (the default) leaves the
+	// ghcr.io/ipedrazas/proteos-guest:base-1.2.3. Empty (the default) leaves the
 	// fallback catalog Firecracker-only, so a cluster host would have nothing it
 	// can boot; a Kubernetes deployment sets this or PROTEOS_TEMPLATES_FILE.
 	ImageRef string

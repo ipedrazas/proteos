@@ -32,8 +32,8 @@ import (
 	"sync"
 	"time"
 
-	guestwire "github.com/tavon-ai/proteos/guestagent/api"
-	"github.com/tavon-ai/proteos/guestagent/internal/runas"
+	guestwire "github.com/ipedrazas/proteos/guestagent/api"
+	"github.com/ipedrazas/proteos/guestagent/internal/runas"
 )
 
 // defaultFileMode is applied to a file-kind profile item whose FileDef.Mode is 0.

@@ -8,7 +8,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/tavon-ai/proteos/cli/internal/client"
+	"github.com/ipedrazas/proteos/cli/internal/client"
 )
 
 func runProjects(env Env, args []string) int {

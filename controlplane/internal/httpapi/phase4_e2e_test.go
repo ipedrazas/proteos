@@ -14,17 +14,17 @@ import (
 	"github.com/coder/websocket"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/auth"
-	"github.com/tavon-ai/proteos/controlplane/internal/gateway"
-	"github.com/tavon-ai/proteos/controlplane/internal/httpapi"
-	"github.com/tavon-ai/proteos/controlplane/internal/machine"
-	"github.com/tavon-ai/proteos/controlplane/internal/nodeclient"
-	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
-	"github.com/tavon-ai/proteos/controlplane/internal/session"
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
-	"github.com/tavon-ai/proteos/controlplane/internal/testutil"
-	guestwire "github.com/tavon-ai/proteos/guestagent/api"
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/controlplane/internal/auth"
+	"github.com/ipedrazas/proteos/controlplane/internal/gateway"
+	"github.com/ipedrazas/proteos/controlplane/internal/httpapi"
+	"github.com/ipedrazas/proteos/controlplane/internal/machine"
+	"github.com/ipedrazas/proteos/controlplane/internal/nodeclient"
+	"github.com/ipedrazas/proteos/controlplane/internal/secrets"
+	"github.com/ipedrazas/proteos/controlplane/internal/session"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
+	"github.com/ipedrazas/proteos/controlplane/internal/testutil"
+	guestwire "github.com/ipedrazas/proteos/guestagent/api"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 // TestHibernateResumeE2E exercises the whole Phase 4 dev stack with no

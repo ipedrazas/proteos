@@ -48,7 +48,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver"
 )
 
 // Label keys. ManagedByLabel/ComponentLabel select everything this driver owns

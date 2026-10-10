@@ -92,9 +92,9 @@ jobs:
 
       # The Go module tag, which is NOT the release tag.
       #
-      # The CLI is a nested module (github.com/tavon-ai/proteos/cli), so the Go
+      # The CLI is a nested module (github.com/ipedrazas/proteos/cli), so the Go
       # toolchain resolves its versions against `cli/v*`. Given only the release
-      # tag, `go install github.com/tavon-ai/proteos/cli/cmd/proteos@v1.2.3`
+      # tag, `go install github.com/ipedrazas/proteos/cli/cmd/proteos@v1.2.3`
       # falls back to the ROOT module and fails with "found, but does not
       # contain package" — which reads like a broken pin and sends people
       # looking at entirely the wrong thing. v0.1.3 shipped without this and

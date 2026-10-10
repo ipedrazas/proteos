@@ -14,7 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
 )
 
 // defaultSessionExportDir is used when Spec.SessionExportDir is unset. It

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 func validTemplates() []Template {
@@ -68,7 +68,7 @@ func TestNewCatalog_Validation(t *testing.T) {
 }
 
 func TestSingleTemplateCatalog(t *testing.T) {
-	c, err := SingleTemplateCatalog("rootfs.ext4", "vmlinux-6.1", "ghcr.io/tavon-ai/proteos-guest:base",
+	c, err := SingleTemplateCatalog("rootfs.ext4", "vmlinux-6.1", "ghcr.io/ipedrazas/proteos-guest:base",
 		Resources{Vcpus: 2, MemMiB: 2048, DiskMiB: 10240})
 	if err != nil {
 		t.Fatalf("SingleTemplateCatalog: %v", err)
@@ -78,7 +78,7 @@ func TestSingleTemplateCatalog(t *testing.T) {
 		t.Fatalf("unexpected base template: %+v", d)
 	}
 	// K3: the same fallback template serves both backends when both refs are set.
-	if d.ImageRef != "ghcr.io/tavon-ai/proteos-guest:base" {
+	if d.ImageRef != "ghcr.io/ipedrazas/proteos-guest:base" {
 		t.Fatalf("image_ref not carried: %+v", d)
 	}
 	if got := d.SupportedDrivers(); len(got) != 3 {

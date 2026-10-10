@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/applog"
+	"github.com/ipedrazas/proteos/controlplane/internal/applog"
 )
 
 // Limits for the logs API (TAV-108). maxLogsLimit/defaultLogsLimit bound how

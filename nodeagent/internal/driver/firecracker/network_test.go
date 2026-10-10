@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 // commentArg returns the value following "comment" in an nft rule arg list, or

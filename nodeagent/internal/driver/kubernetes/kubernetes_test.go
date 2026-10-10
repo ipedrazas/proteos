@@ -11,17 +11,17 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver/conformance"
-	k8s "github.com/tavon-ai/proteos/nodeagent/internal/driver/kubernetes"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver/kubernetes/fakecluster"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver/conformance"
+	k8s "github.com/ipedrazas/proteos/nodeagent/internal/driver/kubernetes"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver/kubernetes/fakecluster"
 )
 
 const (
 	testNamespace = "proteos-machines"
-	testImage     = "ghcr.io/tavon-ai/proteos-guest:base-test"
-	failImage     = "ghcr.io/tavon-ai/proteos-guest:fail-boot"
+	testImage     = "ghcr.io/ipedrazas/proteos-guest:base-test"
+	failImage     = "ghcr.io/ipedrazas/proteos-guest:fail-boot"
 )
 
 // newDriver builds a driver over a simulated cluster whose pods become ready

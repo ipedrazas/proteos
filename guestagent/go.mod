@@ -1,4 +1,4 @@
-module github.com/tavon-ai/proteos/guestagent
+module github.com/ipedrazas/proteos/guestagent
 
 go 1.26.6
 

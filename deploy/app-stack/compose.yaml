@@ -6,7 +6,7 @@
 #   # browse to $PROTEOS_BASE_URL and sign in with GitHub
 #
 # controlplane/web run PRE-BUILT images from GHCR
-# (ghcr.io/tavon-ai/proteos-api, ghcr.io/tavon-ai/proteos-ui), published by
+# (ghcr.io/ipedrazas/proteos-api, ghcr.io/ipedrazas/proteos-ui), published by
 # .github/workflows/ci.yml on every push to main (tags: `latest` + the commit
 # SHA) and on `v*` tags (semver). Pin PROTEOS_VERSION to a SHA or semver tag —
 # never `latest` — so a deploy is reproducible and rollback is just "set
@@ -96,7 +96,7 @@ services:
     restart: unless-stopped
 
   controlplane:
-    image: ghcr.io/tavon-ai/proteos-api:${PROTEOS_VERSION:?set to a pinned GHCR tag (e.g. sha-abc1234 or 1.2.3), never latest — see DEPLOYMENT.md}
+    image: ghcr.io/ipedrazas/proteos-api:${PROTEOS_VERSION:?set to a pinned GHCR tag (e.g. sha-abc1234 or 1.2.3), never latest — see DEPLOYMENT.md}
     # Steady state stays at 1: the poller, SSE/task-event broker, gateway WS
     # registry, and per-process rate limiter all hold in-memory state that
     # isn't shared across instances, so an always-on 2nd replica would
@@ -247,7 +247,7 @@ services:
     restart: unless-stopped
 
   web:
-    image: ghcr.io/tavon-ai/proteos-ui:${PROTEOS_VERSION:?set to a pinned GHCR tag (e.g. sha-abc1234 or 1.2.3), never latest — see DEPLOYMENT.md}
+    image: ghcr.io/ipedrazas/proteos-ui:${PROTEOS_VERSION:?set to a pinned GHCR tag (e.g. sha-abc1234 or 1.2.3), never latest — see DEPLOYMENT.md}
     # Single replica: it publishes a fixed host port (WEB_PORT), so a 2nd
     # replica can't bind alongside it without a load balancer in front. It's
     # a thin, stateless nginx (static SPA + reverse proxy) — recreating it is

@@ -42,8 +42,8 @@ pre-built images published by `.github/workflows/ci.yml`'s `publish` job:
 
 | Service       | Image                            | Built from                             |
 | ------------- | --------------------------------- | --------------------------------------- |
-| `controlplane`| `ghcr.io/tavon-ai/proteos-api`     | `deploy/app-stack/controlplane.Dockerfile` |
-| `web`         | `ghcr.io/tavon-ai/proteos-ui`      | `deploy/app-stack/web.Dockerfile`        |
+| `controlplane`| `ghcr.io/ipedrazas/proteos-api`     | `deploy/app-stack/controlplane.Dockerfile` |
+| `web`         | `ghcr.io/ipedrazas/proteos-ui`      | `deploy/app-stack/web.Dockerfile`        |
 
 CI publishes on every push to `main` (tags: `latest` and the commit SHA, as
 `sha-<short>` / `sha-<full>`) and on `v*.*.*` tags (semver: `1.2.3` and

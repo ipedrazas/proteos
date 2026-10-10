@@ -14,15 +14,15 @@ import (
 
 	"github.com/coder/websocket"
 
-	guestwire "github.com/tavon-ai/proteos/guestagent/api"
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	guestwire "github.com/ipedrazas/proteos/guestagent/api"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/audit"
-	"github.com/tavon-ai/proteos/controlplane/internal/githost"
-	"github.com/tavon-ai/proteos/controlplane/internal/github"
-	"github.com/tavon-ai/proteos/controlplane/internal/machine"
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
-	"github.com/tavon-ai/proteos/controlplane/internal/taskevents"
+	"github.com/ipedrazas/proteos/controlplane/internal/audit"
+	"github.com/ipedrazas/proteos/controlplane/internal/githost"
+	"github.com/ipedrazas/proteos/controlplane/internal/github"
+	"github.com/ipedrazas/proteos/controlplane/internal/machine"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
+	"github.com/ipedrazas/proteos/controlplane/internal/taskevents"
 )
 
 // ErrNoChannel means the machine has no live control channel (it is not running,

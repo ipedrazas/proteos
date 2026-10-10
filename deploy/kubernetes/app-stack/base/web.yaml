@@ -42,7 +42,7 @@ spec:
     spec:
       containers:
         - name: web
-          image: ghcr.io/tavon-ai/proteos-ui:latest
+          image: ghcr.io/ipedrazas/proteos-ui:latest
           env:
             # nginx re-resolves the upstream through this on a 10 s interval so
             # a control-plane rollout is followed without a restart. A NAME, not

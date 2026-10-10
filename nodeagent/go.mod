@@ -1,4 +1,4 @@
-module github.com/tavon-ai/proteos/nodeagent
+module github.com/ipedrazas/proteos/nodeagent
 
 go 1.26.6
 

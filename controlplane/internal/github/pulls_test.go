@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/github"
+	"github.com/ipedrazas/proteos/controlplane/internal/github"
 )
 
 func TestGetPR(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
+	"github.com/ipedrazas/proteos/controlplane/internal/secrets"
 )
 
 // probePath mirrors the (unexported) path SelfCheck writes, so tests can assert

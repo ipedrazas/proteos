@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	guestwire "github.com/tavon-ai/proteos/guestagent/api"
-	"github.com/tavon-ai/proteos/guestagent/internal/runas"
+	guestwire "github.com/ipedrazas/proteos/guestagent/api"
+	"github.com/ipedrazas/proteos/guestagent/internal/runas"
 )
 
 // replaceProviders is a test shim for the common provider-only push, wrapping the

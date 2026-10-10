@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/machine"
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/ipedrazas/proteos/controlplane/internal/machine"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
 )
 
 // seedSessions inserts n queued agent_tasks rows for m, returning their ids.

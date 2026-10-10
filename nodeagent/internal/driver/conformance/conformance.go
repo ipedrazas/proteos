@@ -25,8 +25,8 @@ import (
 	"testing"
 	"time"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver"
 )
 
 // Suite describes how to build and drive one backend.

@@ -13,10 +13,10 @@ import (
 	fakediscovery "k8s.io/client-go/discovery/fake"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
-	k8s "github.com/tavon-ai/proteos/nodeagent/internal/driver/kubernetes"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver/kubernetes/fakecluster"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver"
+	k8s "github.com/ipedrazas/proteos/nodeagent/internal/driver/kubernetes"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver/kubernetes/fakecluster"
 )
 
 // The FQDN engine (K6). A fake cluster cannot resolve a name through a DNS

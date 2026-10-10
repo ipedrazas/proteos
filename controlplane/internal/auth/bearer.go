@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
 )
 
 // ErrInvalidBearer is returned when an IdP access token does not resolve to a

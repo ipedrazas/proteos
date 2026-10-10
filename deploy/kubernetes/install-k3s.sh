@@ -9,7 +9,7 @@
 #
 #   deploy/kubernetes/install-k3s.sh \
 #       --base-url http://192.168.2.220 \
-#       --guest-image ghcr.io/tavon-ai/proteos-guest:base-1.2.3 \
+#       --guest-image ghcr.io/ipedrazas/proteos-guest:base-1.2.3 \
 #       --app-tag sha-abc1234 \
 #       --install-gvisor --ssh-user ivan
 #
@@ -292,7 +292,7 @@ resources:
   - ../../overlays/k3s
 
 images:
-  - name: ghcr.io/tavon-ai/proteos-node-agent
+  - name: ghcr.io/ipedrazas/proteos-node-agent
     newTag: ${AGENT_TAG}
 EOF
         if [[ -n "$AGENT_REPLICAS" || $NO_SANDBOX -eq 1 ]]; then
@@ -424,9 +424,9 @@ EOF
         cat <<EOF
 
 images:
-  - name: ghcr.io/tavon-ai/proteos-api
+  - name: ghcr.io/ipedrazas/proteos-api
     newTag: ${APP_TAG}
-  - name: ghcr.io/tavon-ai/proteos-ui
+  - name: ghcr.io/ipedrazas/proteos-ui
     newTag: ${APP_TAG}
 
 patches:

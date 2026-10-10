@@ -1,4 +1,4 @@
-module github.com/tavon-ai/proteos/cli
+module github.com/ipedrazas/proteos/cli
 
 go 1.26.6
 
