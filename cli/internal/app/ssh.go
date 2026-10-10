@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/tavon-ai/proteos/cli/internal/client"
+	"github.com/ipedrazas/proteos/cli/internal/client"
 )
 
 // defaultSSHUser is the account a guest session lands as: build-rootfs.sh's

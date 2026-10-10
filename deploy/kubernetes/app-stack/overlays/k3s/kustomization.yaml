@@ -17,7 +17,7 @@ configMapGenerator:
       # The address users open: the LoadBalancer's, or the name pointing at it.
       - PROTEOS_BASE_URL=http://192.0.2.10
       # The guest image machines boot. Immutable tag or digest.
-      - PROTEOS_IMAGE_REF=ghcr.io/tavon-ai/proteos-guest:base-CHANGE_ME
+      - PROTEOS_IMAGE_REF=ghcr.io/ipedrazas/proteos-guest:base-CHANGE_ME
 
 patches:
   - target:
@@ -30,7 +30,7 @@ patches:
 
 # Pin the app images here (compose.yaml's PROTEOS_VERSION), e.g. a commit tag:
 # images:
-#   - name: ghcr.io/tavon-ai/proteos-api
+#   - name: ghcr.io/ipedrazas/proteos-api
 #     newTag: sha-abc1234
-#   - name: ghcr.io/tavon-ai/proteos-ui
+#   - name: ghcr.io/ipedrazas/proteos-ui
 #     newTag: sha-abc1234

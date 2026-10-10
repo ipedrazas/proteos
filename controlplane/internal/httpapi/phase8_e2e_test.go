@@ -15,9 +15,9 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/auth"
-	"github.com/tavon-ai/proteos/controlplane/internal/nodeclient"
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/controlplane/internal/auth"
+	"github.com/ipedrazas/proteos/controlplane/internal/nodeclient"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 // TestMachineWebE2E exercises the whole Phase 8 path on a hypervisor-less dev

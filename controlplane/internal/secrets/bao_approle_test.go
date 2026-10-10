@@ -9,7 +9,7 @@ import (
 
 	bao "github.com/openbao/openbao/api/v2"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
+	"github.com/ipedrazas/proteos/controlplane/internal/secrets"
 )
 
 // setupAppRole enables the AppRole auth backend on the running OpenBao dev

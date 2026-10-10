@@ -14,7 +14,7 @@ requests, or discussions.**
 Instead, report privately through one of:
 
 - **GitHub Security Advisories** (preferred) — use the
-  [**Report a vulnerability**](https://github.com/tavon-ai/proteos/security/advisories/new)
+  [**Report a vulnerability**](https://github.com/ipedrazas/proteos/security/advisories/new)
   button on the Security tab. This opens a private channel with the maintainers.
 - **Email** — `security@tavon.ai` _(maintainers: replace with a monitored
   address before publishing if this mailbox does not exist)_.

@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/machine"
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/controlplane/internal/machine"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 func TestValidateNetworkPolicy(t *testing.T) {

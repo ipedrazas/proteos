@@ -24,7 +24,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 // ErrUnknownMachine is returned when the agent reports 404 unknown_machine.

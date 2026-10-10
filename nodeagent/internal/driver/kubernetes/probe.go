@@ -18,7 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 // NetworkPolicy enforcement probe (K-plan decision 7, deferred from K2 and

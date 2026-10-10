@@ -12,8 +12,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 // Network policy modes (TAV-116). AllowAll is the default for every machine

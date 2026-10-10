@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/profile"
+	"github.com/ipedrazas/proteos/controlplane/internal/profile"
 )
 
 // GitConfigurer re-pushes the configure ops (git.configure + claude.configure)

@@ -35,8 +35,8 @@ import (
 	"github.com/coder/websocket"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	guestwire "github.com/tavon-ai/proteos/guestagent/api"
-	"github.com/tavon-ai/proteos/guestagent/internal/term"
+	guestwire "github.com/ipedrazas/proteos/guestagent/api"
+	"github.com/ipedrazas/proteos/guestagent/internal/term"
 )
 
 // pingInterval is how often each leg sends a WebSocket ping to keep the

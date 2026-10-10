@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
-	"github.com/tavon-ai/proteos/nodeagent/internal/wsclient"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/nodeagent/internal/wsclient"
 )
 
 // TestGuestProjectsCwdAndKV is the Phase 9 host acceptance gate (task 9.6b). On a

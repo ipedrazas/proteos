@@ -1,6 +1,6 @@
-module github.com/tavon-ai/proteos/guestagent
+module github.com/ipedrazas/proteos/guestagent
 
-go 1.26.6
+go 1.26.9
 
 require (
 	github.com/coder/websocket v1.8.15

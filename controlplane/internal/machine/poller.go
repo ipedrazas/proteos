@@ -12,9 +12,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/nodeclient"
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/controlplane/internal/nodeclient"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 // Poll cadences. Transitional machines (provisioning/starting/stopping) are

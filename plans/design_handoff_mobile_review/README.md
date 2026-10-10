@@ -35,7 +35,7 @@ Open `ProteOS_Redesign_reference.html` and scroll to the block labeled **1c**. *
   - "OPEN PR" chip: `height:22px; padding:0 8px; border-radius:6px; background:rgba(63,185,80,0.14); border:1px solid rgba(63,185,80,0.4); color:#3fb950; font-size:11px; font-weight:700;` with a 12px branch icon. (Merged → purple `#a371f7`; Closed → red `#f85149`; Draft → grey `#8b949e`.)
   - PR number, `font-size:12px; color:#8b949e` (e.g. "#284").
 - **Title:** `font-size:17px; font-weight:700; line-height:1.35; letter-spacing:-0.01em` (e.g. "Node-agent reliability hardening").
-- **Repo/branch:** mono `font-size:11.5px; color:#8b949e; margin-top:6px` (e.g. "tavon-ai/proteos · feat/tav-38-node-agent-reliability").
+- **Repo/branch:** mono `font-size:11.5px; color:#8b949e; margin-top:6px` (e.g. "ipedrazas/proteos · feat/tav-38-node-agent-reliability").
 
 **Body** — scrollable (`flex:1; overflow:auto; min-height:0`):
 - **Stat strip** — `padding:12px 18px; border-bottom:1px solid #21262d; display:flex; align-items:center; gap:14px; font-size:12.5px`: "N files" `#8b949e`; "+128" `#3fb950 / 600`; "−34" `#f85149 / 600`; right-aligned checks summary (`margin-left:auto`) with a 14px check icon `#3fb950` + "2 checks passed" `#8b949e`.

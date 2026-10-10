@@ -11,10 +11,10 @@ import (
 	"path"
 	"time"
 
-	guestwire "github.com/tavon-ai/proteos/guestagent/api"
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	guestwire "github.com/ipedrazas/proteos/guestagent/api"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/machine"
+	"github.com/ipedrazas/proteos/controlplane/internal/machine"
 )
 
 // downloadDialTimeout bounds the tunnel dial + guest handshake for a download.

@@ -30,5 +30,5 @@ labels:
       app.kubernetes.io/part-of: proteos
 
 images:
-  - name: ghcr.io/tavon-ai/proteos-node-agent
+  - name: ghcr.io/ipedrazas/proteos-node-agent
     newTag: latest

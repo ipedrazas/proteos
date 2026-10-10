@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
-	k8s "github.com/tavon-ai/proteos/nodeagent/internal/driver/kubernetes"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver/kubernetes/fakecluster"
-	"github.com/tavon-ai/proteos/nodeagent/internal/httpapi"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
+	k8s "github.com/ipedrazas/proteos/nodeagent/internal/driver/kubernetes"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver/kubernetes/fakecluster"
+	"github.com/ipedrazas/proteos/nodeagent/internal/httpapi"
 )
 
 // The HTTP layer is driver-agnostic by design — it only ever sees the Driver
@@ -25,7 +25,7 @@ func newKubernetesServer(t *testing.T) *httptest.Server {
 	cluster := fakecluster.New(fakecluster.Options{
 		Namespace:     k8sTestNamespace,
 		BootDelay:     fastBoot,
-		FailBootImage: "ghcr.io/tavon-ai/proteos-guest:fail-boot",
+		FailBootImage: "ghcr.io/ipedrazas/proteos-guest:fail-boot",
 		Nodes: []fakecluster.Node{
 			{Name: "node-a", Vcpus: 8, MemMiB: 16384},
 		},
@@ -50,7 +50,7 @@ func ensureK8s(image string) api.EnsureRequest {
 func TestKubernetesLifecycleOverTheWire(t *testing.T) {
 	ts := newKubernetesServer(t)
 	id := "aaaaaaaa-0000-4000-8000-00000000c001"
-	const image = "ghcr.io/tavon-ai/proteos-guest:base-test"
+	const image = "ghcr.io/ipedrazas/proteos-guest:base-test"
 
 	resp := do(t, ts, http.MethodPut, "/v1/machines/"+id, ensureK8s(image))
 	if resp.StatusCode != http.StatusAccepted {
@@ -119,7 +119,7 @@ func TestKubernetesFailedBootSurfacesAsError(t *testing.T) {
 	id := "bbbbbbbb-0000-4000-8000-00000000c002"
 
 	resp := do(t, ts, http.MethodPut, "/v1/machines/"+id,
-		ensureK8s("ghcr.io/tavon-ai/proteos-guest:fail-boot"))
+		ensureK8s("ghcr.io/ipedrazas/proteos-guest:fail-boot"))
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("ensure: want 202, got %d", resp.StatusCode)
 	}
@@ -160,7 +160,7 @@ func TestKubernetesGuestTunnelRejectsNotRunning(t *testing.T) {
 	id := "dddddddd-0000-4000-8000-00000000c004"
 
 	resp := do(t, ts, http.MethodPut, "/v1/machines/"+id,
-		ensureK8s("ghcr.io/tavon-ai/proteos-guest:base-test"))
+		ensureK8s("ghcr.io/ipedrazas/proteos-guest:base-test"))
 	resp.Body.Close()
 
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/machines/"+id+"/guest", nil)
@@ -182,7 +182,7 @@ func TestKubernetesCapacityOverTheWire(t *testing.T) {
 	id := "eeeeeeee-0000-4000-8000-00000000c005"
 
 	resp := do(t, ts, http.MethodPut, "/v1/machines/"+id,
-		ensureK8s("ghcr.io/tavon-ai/proteos-guest:base-test"))
+		ensureK8s("ghcr.io/ipedrazas/proteos-guest:base-test"))
 	resp.Body.Close()
 	waitState(t, ts, id, api.StateRunning)
 

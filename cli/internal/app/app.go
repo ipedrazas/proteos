@@ -12,8 +12,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/tavon-ai/proteos/cli/internal/client"
-	"github.com/tavon-ai/proteos/cli/internal/config"
+	"github.com/ipedrazas/proteos/cli/internal/client"
+	"github.com/ipedrazas/proteos/cli/internal/config"
 )
 
 // Env carries the process I/O and build metadata into the command tree, so tests

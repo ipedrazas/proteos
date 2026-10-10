@@ -10,8 +10,8 @@ import (
 
 	"github.com/coder/websocket"
 
-	guestwire "github.com/tavon-ai/proteos/guestagent/api"
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	guestwire "github.com/ipedrazas/proteos/guestagent/api"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 // SSHProxy is the inbound-SSH gateway (plan: docs/plans/ssh-access.md §3.4

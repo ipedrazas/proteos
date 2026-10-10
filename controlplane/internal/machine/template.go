@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 // Resources is a machine's resource spec: pinned vCPUs, memory, and persistent

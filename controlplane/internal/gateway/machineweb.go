@@ -29,8 +29,8 @@ import (
 	"sync"
 	"time"
 
-	guestwire "github.com/tavon-ai/proteos/guestagent/api"
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	guestwire "github.com/ipedrazas/proteos/guestagent/api"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 // MachineCookieName is the subdomain-scoped editor cookie. Exported for the

@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver/dev"
-	"github.com/tavon-ai/proteos/nodeagent/internal/httpapi"
-	"github.com/tavon-ai/proteos/nodeagent/internal/state"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver/dev"
+	"github.com/ipedrazas/proteos/nodeagent/internal/httpapi"
+	"github.com/ipedrazas/proteos/nodeagent/internal/state"
 )
 
 const testToken = "test-bearer-token"

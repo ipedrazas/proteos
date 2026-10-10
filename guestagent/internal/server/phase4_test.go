@@ -8,9 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	guestwire "github.com/tavon-ai/proteos/guestagent/api"
-	"github.com/tavon-ai/proteos/guestagent/internal/persist"
-	"github.com/tavon-ai/proteos/guestagent/internal/term"
+	guestwire "github.com/ipedrazas/proteos/guestagent/api"
+	"github.com/ipedrazas/proteos/guestagent/internal/persist"
+	"github.com/ipedrazas/proteos/guestagent/internal/term"
 )
 
 // putJSON issues an authenticated-free PUT with a JSON body.

@@ -171,7 +171,7 @@ already reaches:
 ```sh
 deploy/kubernetes/install-k3s.sh \
     --base-url http://192.0.2.10 \
-    --guest-image ghcr.io/tavon-ai/proteos-guest:base-1.2.3 \
+    --guest-image ghcr.io/ipedrazas/proteos-guest:base-1.2.3 \
     --app-tag sha-abc1234 \
     --ghcr-user <github-user> --ghcr-token <PAT with read:packages> \
     --install-gvisor --ssh-user <node user>
@@ -275,7 +275,7 @@ is most of why a machine boots in seconds rather than minutes.
 That makes the template's `image_ref` a promise: **point it at an immutable tag
 or a digest**. A moving tag pinned by `IfNotPresent` means a node keeps starting
 machines from whatever it cached first, indefinitely and invisibly, while another
-node runs something newer. `ghcr.io/tavon-ai/proteos-guest:base-1.2.3` or
+node runs something newer. `ghcr.io/ipedrazas/proteos-guest:base-1.2.3` or
 `...proteos-guest@sha256:…`, never `:latest`.
 
 ## Giving it something to boot
@@ -285,7 +285,7 @@ cluster host needs templates carrying an OCI `image_ref`:
 
 ```json
 {"templates": [
-  {"id": "base", "label": "Base", "image_ref": "ghcr.io/tavon-ai/proteos-guest:base-1.2.3",
+  {"id": "base", "label": "Base", "image_ref": "ghcr.io/ipedrazas/proteos-guest:base-1.2.3",
    "defaults": {"vcpus": 2, "mem_mib": 2048, "disk_mib": 10240}}
 ]}
 ```

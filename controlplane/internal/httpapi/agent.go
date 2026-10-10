@@ -4,11 +4,11 @@ import (
 	"context"
 	"net/http"
 
-	guestwire "github.com/tavon-ai/proteos/guestagent/api"
+	guestwire "github.com/ipedrazas/proteos/guestagent/api"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/audit"
-	"github.com/tavon-ai/proteos/controlplane/internal/gateway"
-	"github.com/tavon-ai/proteos/controlplane/internal/machine"
+	"github.com/ipedrazas/proteos/controlplane/internal/audit"
+	"github.com/ipedrazas/proteos/controlplane/internal/gateway"
+	"github.com/ipedrazas/proteos/controlplane/internal/machine"
 )
 
 // handleGatewayAgent serves WS /gw/agent/{provider}: it reuses the terminal

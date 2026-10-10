@@ -8,10 +8,10 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
-	k8s "github.com/tavon-ai/proteos/nodeagent/internal/driver/kubernetes"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver/kubernetes/fakecluster"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver"
+	k8s "github.com/ipedrazas/proteos/nodeagent/internal/driver/kubernetes"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver/kubernetes/fakecluster"
 )
 
 // policyFor ensures a machine with the given policy and returns the

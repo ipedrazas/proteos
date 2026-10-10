@@ -8,7 +8,7 @@ import (
 	"net"
 	"strings"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 // Networking mirrors the spike's tap + NAT setup (03-network.sh / lib.sh), but

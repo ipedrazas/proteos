@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tavon-ai/proteos/cli/internal/client"
+	"github.com/ipedrazas/proteos/cli/internal/client"
 )
 
 // TestStreamEventsIgnoresHTTPClientTimeout verifies that the global Timeout set

@@ -18,7 +18,7 @@
 # Build context is the REPO ROOT (it needs guestagent/ and image/):
 #
 #   docker build -f image/guest.Dockerfile --build-arg TEMPLATE=base \
-#     -t ghcr.io/tavon-ai/proteos-guest:base-dev .
+#     -t ghcr.io/ipedrazas/proteos-guest:base-dev .
 #
 # TEMPLATE selects the language layer, matching image/bake-templates.sh:
 #   base | go | node | python | full

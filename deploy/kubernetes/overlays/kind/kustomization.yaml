@@ -11,7 +11,7 @@ resources:
   - ../../base
 
 images:
-  - name: ghcr.io/tavon-ai/proteos-node-agent
+  - name: ghcr.io/ipedrazas/proteos-node-agent
     newName: proteos-node-agent
     newTag: e2e
 

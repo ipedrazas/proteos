@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver/firecracker"
-	"github.com/tavon-ai/proteos/nodeagent/internal/state"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver/firecracker"
+	"github.com/ipedrazas/proteos/nodeagent/internal/state"
 )
 
 // These tests boot REAL Firecracker microVMs and therefore need KVM, root, the

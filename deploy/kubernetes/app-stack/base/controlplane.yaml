@@ -71,7 +71,7 @@ spec:
       # its log.
       containers:
         - name: controlplane
-          image: ghcr.io/tavon-ai/proteos-api:latest
+          image: ghcr.io/ipedrazas/proteos-api:latest
           # The image's entrypoint already passes -migrate.
           envFrom:
             - configMapRef:
