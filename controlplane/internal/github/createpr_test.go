@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/github"
+	"github.com/ipedrazas/proteos/controlplane/internal/github"
 )
 
 func TestCreatePR(t *testing.T) {

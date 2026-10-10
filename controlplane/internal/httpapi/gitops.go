@@ -11,15 +11,15 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	guestwire "github.com/tavon-ai/proteos/guestagent/api"
+	guestwire "github.com/ipedrazas/proteos/guestagent/api"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/audit"
-	"github.com/tavon-ai/proteos/controlplane/internal/gitea"
-	"github.com/tavon-ai/proteos/controlplane/internal/githost"
-	"github.com/tavon-ai/proteos/controlplane/internal/github"
-	"github.com/tavon-ai/proteos/controlplane/internal/guestctl"
-	"github.com/tavon-ai/proteos/controlplane/internal/machine"
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/ipedrazas/proteos/controlplane/internal/audit"
+	"github.com/ipedrazas/proteos/controlplane/internal/gitea"
+	"github.com/ipedrazas/proteos/controlplane/internal/githost"
+	"github.com/ipedrazas/proteos/controlplane/internal/github"
+	"github.com/ipedrazas/proteos/controlplane/internal/guestctl"
+	"github.com/ipedrazas/proteos/controlplane/internal/machine"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
 )
 
 // GitWorktree is the control-channel surface the worktree-review API needs (GR1):

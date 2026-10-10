@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	guestwire "github.com/tavon-ai/proteos/guestagent/api"
+	guestwire "github.com/ipedrazas/proteos/guestagent/api"
 )
 
 func setupDir(t *testing.T) *Persist {

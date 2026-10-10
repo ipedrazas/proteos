@@ -10,11 +10,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/machine"
-	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
-	"github.com/tavon-ai/proteos/controlplane/internal/testutil"
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/controlplane/internal/machine"
+	"github.com/ipedrazas/proteos/controlplane/internal/secrets"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
+	"github.com/ipedrazas/proteos/controlplane/internal/testutil"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 // K3: the control-plane half of the Kubernetes backend. A cluster-agent is an
@@ -87,9 +87,9 @@ func backendCatalog(t *testing.T) machine.Catalog {
 	defaults := machine.Resources{Vcpus: 2, MemMiB: 2048, DiskMiB: 10240}
 	c, err := machine.NewCatalog([]machine.Template{
 		{ID: "fc", Label: "Firecracker only", RootfsRef: "rootfs-base.ext4", Defaults: defaults},
-		{ID: "k8s", Label: "Image only", ImageRef: "ghcr.io/tavon-ai/proteos-guest:base", Defaults: defaults},
+		{ID: "k8s", Label: "Image only", ImageRef: "ghcr.io/ipedrazas/proteos-guest:base", Defaults: defaults},
 		{ID: "both", Label: "Both", RootfsRef: "rootfs-base.ext4",
-			ImageRef: "ghcr.io/tavon-ai/proteos-guest:base", Defaults: defaults},
+			ImageRef: "ghcr.io/ipedrazas/proteos-guest:base", Defaults: defaults},
 	}, "vmlinux-6.1")
 	if err != nil {
 		t.Fatal(err)
@@ -204,11 +204,11 @@ func TestCreatePinsImageRefAndSendsItOnEnsure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create k8s machine: %v", err)
 	}
-	if k8sMachine.ImageRef == nil || *k8sMachine.ImageRef != "ghcr.io/tavon-ai/proteos-guest:base" {
+	if k8sMachine.ImageRef == nil || *k8sMachine.ImageRef != "ghcr.io/ipedrazas/proteos-guest:base" {
 		t.Fatalf("image_ref = %v, want the template's image", k8sMachine.ImageRef)
 	}
 	req := f.agent.ensureFor(t, machine.UUIDString(k8sMachine.ID))
-	if req.ImageRef != "ghcr.io/tavon-ai/proteos-guest:base" {
+	if req.ImageRef != "ghcr.io/ipedrazas/proteos-guest:base" {
 		t.Fatalf("ensure image_ref = %q", req.ImageRef)
 	}
 

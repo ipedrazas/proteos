@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/audit"
-	"github.com/tavon-ai/proteos/controlplane/internal/auth"
-	"github.com/tavon-ai/proteos/controlplane/internal/httpapi"
-	"github.com/tavon-ai/proteos/controlplane/internal/machine"
-	"github.com/tavon-ai/proteos/controlplane/internal/session"
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
-	"github.com/tavon-ai/proteos/controlplane/internal/taskevents"
-	"github.com/tavon-ai/proteos/controlplane/internal/testutil"
+	"github.com/ipedrazas/proteos/controlplane/internal/audit"
+	"github.com/ipedrazas/proteos/controlplane/internal/auth"
+	"github.com/ipedrazas/proteos/controlplane/internal/httpapi"
+	"github.com/ipedrazas/proteos/controlplane/internal/machine"
+	"github.com/ipedrazas/proteos/controlplane/internal/session"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
+	"github.com/ipedrazas/proteos/controlplane/internal/taskevents"
+	"github.com/ipedrazas/proteos/controlplane/internal/testutil"
 )
 
 // taskStreamFixture wires a Server with a live TaskEvents hub and one agent task.

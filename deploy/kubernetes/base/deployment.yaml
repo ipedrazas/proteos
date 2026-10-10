@@ -53,7 +53,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: node-agent
-          image: ghcr.io/tavon-ai/proteos-node-agent:latest
+          image: ghcr.io/ipedrazas/proteos-node-agent:latest
           # Always, because the tag above is mutable. Kubernetes defaults a
           # `latest` tag to Always for exactly this reason, and IfNotPresent
           # overrides that: a node that has ever cached this tag keeps running

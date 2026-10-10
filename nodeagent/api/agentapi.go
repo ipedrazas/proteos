@@ -231,7 +231,7 @@ type EnsureRequest struct {
 	RootfsRef string `json:"rootfs_ref"`
 
 	// ImageRef is the OCI image the kubernetes driver runs the machine from
-	// (e.g. ghcr.io/tavon-ai/proteos-guest:base-1.2.3). It is the Kubernetes
+	// (e.g. ghcr.io/ipedrazas/proteos-guest:base-1.2.3). It is the Kubernetes
 	// backend's analogue of KernelRef+RootfsRef, which are Firecracker-shaped
 	// (a kernel to boot and an ext4 to attach) and have no meaning for a pod.
 	// Additive and omitempty, so a control plane that predates the Kubernetes

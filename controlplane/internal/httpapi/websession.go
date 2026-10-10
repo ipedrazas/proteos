@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/gateway"
-	"github.com/tavon-ai/proteos/controlplane/internal/machine"
-	"github.com/tavon-ai/proteos/controlplane/internal/session"
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/controlplane/internal/gateway"
+	"github.com/ipedrazas/proteos/controlplane/internal/machine"
+	"github.com/ipedrazas/proteos/controlplane/internal/session"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 // handleWebSession mints the one-shot, ≤60s web-session URL the SPA navigates the

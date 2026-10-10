@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver/dev"
-	"github.com/tavon-ai/proteos/nodeagent/internal/state"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver/dev"
+	"github.com/ipedrazas/proteos/nodeagent/internal/state"
 )
 
 const fastBoot = 20 * time.Millisecond

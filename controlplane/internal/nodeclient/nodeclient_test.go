@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 func TestNewTrimsTrailingSlash(t *testing.T) {

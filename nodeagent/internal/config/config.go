@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 // Config is the fully-resolved node-agent configuration.

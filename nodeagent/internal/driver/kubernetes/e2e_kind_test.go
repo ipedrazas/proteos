@@ -29,8 +29,8 @@ import (
 	"testing"
 	"time"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
-	"github.com/tavon-ai/proteos/nodeagent/internal/wsclient"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/nodeagent/internal/wsclient"
 )
 
 // Environment, supplied by e2e-kind.sh.

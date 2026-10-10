@@ -11,8 +11,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
-	k8s "github.com/tavon-ai/proteos/nodeagent/internal/driver/kubernetes"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
+	k8s "github.com/ipedrazas/proteos/nodeagent/internal/driver/kubernetes"
 )
 
 // Guest listener authentication (K5). The threat these tests are about: on a

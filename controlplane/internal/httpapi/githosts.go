@@ -7,10 +7,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/audit"
-	"github.com/tavon-ai/proteos/controlplane/internal/gitea"
-	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/ipedrazas/proteos/controlplane/internal/audit"
+	"github.com/ipedrazas/proteos/controlplane/internal/gitea"
+	"github.com/ipedrazas/proteos/controlplane/internal/secrets"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
 )
 
 // Gitea/Forgejo phase 2: per-user PATs for the additional git hosts on the

@@ -1,6 +1,6 @@
 [Unit]
 Description=ProteOS guest sshd (loopback-only, reached through the guest agent's SSH forward)
-Documentation=https://github.com/tavon-ai/proteos
+Documentation=https://github.com/ipedrazas/proteos
 # Ordered after the guest agent because the agent symlinks /etc/ssh/ssh_host_*
 # onto the persist disk during its startup, and ExecStartPre's `ssh-keygen -A`
 # should ideally find those symlinks already in place. This is a bias, not a

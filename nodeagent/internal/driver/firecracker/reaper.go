@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 const reaperInterval = 30 * time.Second

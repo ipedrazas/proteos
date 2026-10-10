@@ -5,7 +5,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
 )
 
 // Update is one published machine change: the post-commit machine row plus the

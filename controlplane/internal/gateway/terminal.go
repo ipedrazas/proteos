@@ -21,9 +21,9 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/nodeclient"
-	guestwire "github.com/tavon-ai/proteos/guestagent/api"
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/controlplane/internal/nodeclient"
+	guestwire "github.com/ipedrazas/proteos/guestagent/api"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 // pingInterval keeps the browser leg alive (and any idle timers between us and

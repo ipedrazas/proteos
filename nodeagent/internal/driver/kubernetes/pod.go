@@ -10,8 +10,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver"
 )
 
 // objectMeta is the labels/annotations every object for one machine carries.

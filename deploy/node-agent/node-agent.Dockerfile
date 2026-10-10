@@ -13,7 +13,7 @@
 # through the module path):
 #
 #   docker build -f deploy/node-agent/node-agent.Dockerfile \
-#     -t ghcr.io/tavon-ai/proteos-node-agent:dev .
+#     -t ghcr.io/ipedrazas/proteos-node-agent:dev .
 #
 # See deploy/kubernetes/ for the manifests that run it.
 

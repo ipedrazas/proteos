@@ -10,10 +10,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/audit"
-	"github.com/tavon-ai/proteos/controlplane/internal/guestctl"
-	"github.com/tavon-ai/proteos/controlplane/internal/machine"
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/ipedrazas/proteos/controlplane/internal/audit"
+	"github.com/ipedrazas/proteos/controlplane/internal/guestctl"
+	"github.com/ipedrazas/proteos/controlplane/internal/machine"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
 )
 
 // TaskChannel dispatches a headless agent run over the control channel (AT1).

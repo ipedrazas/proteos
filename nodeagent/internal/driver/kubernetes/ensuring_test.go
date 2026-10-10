@@ -9,8 +9,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver"
 )
 
 // An internal test, because the race it pins cannot be produced from outside:

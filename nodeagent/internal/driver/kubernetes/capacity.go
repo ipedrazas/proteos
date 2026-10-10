@@ -13,7 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver"
 )
 
 // Capacity synthesizes a "host" shape for a whole cluster, so the control

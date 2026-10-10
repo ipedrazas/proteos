@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tavon-ai/proteos/cli/internal/config"
+	"github.com/ipedrazas/proteos/cli/internal/config"
 )
 
 func TestSaveLoadRoundTrip(t *testing.T) {

@@ -10,8 +10,8 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	k8s "github.com/tavon-ai/proteos/nodeagent/internal/driver/kubernetes"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver/kubernetes/fakecluster"
+	k8s "github.com/ipedrazas/proteos/nodeagent/internal/driver/kubernetes"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver/kubernetes/fakecluster"
 )
 
 // The NetworkPolicy enforcement probe (K5, deferred from K2). A fake cluster

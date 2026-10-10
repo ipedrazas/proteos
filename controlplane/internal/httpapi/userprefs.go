@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/audit"
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/ipedrazas/proteos/controlplane/internal/audit"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
 )
 
 // userPrefs is the JSON shape of the user's account-level preferences. It is

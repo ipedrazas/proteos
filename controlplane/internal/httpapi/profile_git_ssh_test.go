@@ -11,14 +11,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/audit"
-	"github.com/tavon-ai/proteos/controlplane/internal/auth"
-	"github.com/tavon-ai/proteos/controlplane/internal/httpapi"
-	"github.com/tavon-ai/proteos/controlplane/internal/profile"
-	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
-	"github.com/tavon-ai/proteos/controlplane/internal/session"
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
-	"github.com/tavon-ai/proteos/controlplane/internal/testutil"
+	"github.com/ipedrazas/proteos/controlplane/internal/audit"
+	"github.com/ipedrazas/proteos/controlplane/internal/auth"
+	"github.com/ipedrazas/proteos/controlplane/internal/httpapi"
+	"github.com/ipedrazas/proteos/controlplane/internal/profile"
+	"github.com/ipedrazas/proteos/controlplane/internal/secrets"
+	"github.com/ipedrazas/proteos/controlplane/internal/session"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
+	"github.com/ipedrazas/proteos/controlplane/internal/testutil"
 )
 
 // recordingConfigurer records ReconfigureUser calls (Phase 4 git-identity re-apply).

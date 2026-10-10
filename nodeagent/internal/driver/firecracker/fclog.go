@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/tavon-ai/proteos/nodeagent/internal/metrics"
+	"github.com/ipedrazas/proteos/nodeagent/internal/metrics"
 )
 
 // logFIFOName is the filename of the Firecracker log FIFO inside the jail run dir.

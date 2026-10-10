@@ -9,8 +9,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 // Registry dials the correct node-agent for a given machine or host by

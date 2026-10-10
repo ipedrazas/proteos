@@ -257,7 +257,7 @@ containerized:
   `deploy/node-agent/`, talking to the app VM over the LAN.
 
 `controlplane` and `web` run **pre-built images published to GHCR**
-(`ghcr.io/tavon-ai/proteos-api`, `ghcr.io/tavon-ai/proteos-ui`) rather than
+(`ghcr.io/ipedrazas/proteos-api`, `ghcr.io/ipedrazas/proteos-ui`) rather than
 building from source at deploy time. CI (`.github/workflows/ci.yml`) publishes
 both images together on every push to `main` (tags `latest` and
 `sha-<commit>`) and on `v*.*.*` tags (semver). Pin `PROTEOS_VERSION` to a SHA

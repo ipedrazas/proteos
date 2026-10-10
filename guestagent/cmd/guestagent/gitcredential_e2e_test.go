@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	guestwire "github.com/tavon-ai/proteos/guestagent/api"
-	"github.com/tavon-ai/proteos/guestagent/internal/localsock"
-	"github.com/tavon-ai/proteos/guestagent/internal/runas"
+	guestwire "github.com/ipedrazas/proteos/guestagent/api"
+	"github.com/ipedrazas/proteos/guestagent/internal/localsock"
+	"github.com/ipedrazas/proteos/guestagent/internal/runas"
 )
 
 // stubResolver stands in for the control channel: it returns a fixed credential,

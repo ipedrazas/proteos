@@ -7,8 +7,8 @@ import (
 	"os"
 	"runtime/debug"
 
-	"github.com/tavon-ai/proteos/cli/internal/app"
-	"github.com/tavon-ai/proteos/cli/internal/client"
+	"github.com/ipedrazas/proteos/cli/internal/app"
+	"github.com/ipedrazas/proteos/cli/internal/client"
 )
 
 // Stamped at build time via -ldflags, e.g.
@@ -32,7 +32,7 @@ type identity struct {
 // module build info the toolchain embeds in every binary. Stamped values always
 // win; this only fills gaps.
 //
-// It exists for `go install github.com/tavon-ai/proteos/cli/cmd/proteos@v1.2.3`,
+// It exists for `go install github.com/ipedrazas/proteos/cli/cmd/proteos@v1.2.3`,
 // which is the documented install path and cannot pass linker flags — so those
 // binaries reported themselves as "dev / none / unknown" regardless of the tag
 // they were built from. Module installs do record the resolved version, which is

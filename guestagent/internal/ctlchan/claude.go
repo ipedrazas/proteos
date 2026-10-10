@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	guestwire "github.com/tavon-ai/proteos/guestagent/api"
+	guestwire "github.com/ipedrazas/proteos/guestagent/api"
 )
 
 // claude.configure merges the user's Claude Code preference into

@@ -58,7 +58,7 @@ configMapGenerator:
 # for the same reason compose.yaml refuses it: a deploy of "latest" is not
 # reproducible and cannot be rolled back by name. See DEPLOYMENT.md.
 images:
-  - name: ghcr.io/tavon-ai/proteos-api
+  - name: ghcr.io/ipedrazas/proteos-api
     newTag: latest
-  - name: ghcr.io/tavon-ai/proteos-ui
+  - name: ghcr.io/ipedrazas/proteos-ui
     newTag: latest

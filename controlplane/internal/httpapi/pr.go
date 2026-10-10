@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/audit"
-	"github.com/tavon-ai/proteos/controlplane/internal/github"
+	"github.com/ipedrazas/proteos/controlplane/internal/audit"
+	"github.com/ipedrazas/proteos/controlplane/internal/github"
 )
 
 // PR review endpoints (/api/git/repos/{owner}/{repo}/pulls/{number}...): the

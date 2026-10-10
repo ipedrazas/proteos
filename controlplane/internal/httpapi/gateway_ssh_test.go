@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/auth"
+	"github.com/ipedrazas/proteos/controlplane/internal/auth"
 )
 
 // getSSH issues a plain HTTP GET to /gw/ssh (no WebSocket upgrade), so

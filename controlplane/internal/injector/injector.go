@@ -22,14 +22,14 @@ import (
 	"net/http"
 	"time"
 
-	guestwire "github.com/tavon-ai/proteos/guestagent/api"
-	agentapi "github.com/tavon-ai/proteos/nodeagent/api"
+	guestwire "github.com/ipedrazas/proteos/guestagent/api"
+	agentapi "github.com/ipedrazas/proteos/nodeagent/api"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/audit"
-	"github.com/tavon-ai/proteos/controlplane/internal/profile"
-	"github.com/tavon-ai/proteos/controlplane/internal/providers"
-	"github.com/tavon-ai/proteos/controlplane/internal/secrets"
-	"github.com/tavon-ai/proteos/controlplane/internal/sshkeys"
+	"github.com/ipedrazas/proteos/controlplane/internal/audit"
+	"github.com/ipedrazas/proteos/controlplane/internal/profile"
+	"github.com/ipedrazas/proteos/controlplane/internal/providers"
+	"github.com/ipedrazas/proteos/controlplane/internal/secrets"
+	"github.com/ipedrazas/proteos/controlplane/internal/sshkeys"
 )
 
 // GuestDialer opens the opaque byte tunnel to a machine's guest agent at the

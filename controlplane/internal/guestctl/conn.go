@@ -16,7 +16,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	guestwire "github.com/tavon-ai/proteos/guestagent/api"
+	guestwire "github.com/ipedrazas/proteos/guestagent/api"
 )
 
 // reqHandler handles an inbound (guest → CP) request. It returns a response

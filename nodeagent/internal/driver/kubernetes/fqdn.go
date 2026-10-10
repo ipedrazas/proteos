@@ -11,8 +11,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver"
 )
 
 // FQDN-aware egress (K6).

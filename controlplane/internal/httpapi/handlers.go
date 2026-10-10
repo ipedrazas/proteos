@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/audit"
+	"github.com/ipedrazas/proteos/controlplane/internal/audit"
 )
 
 // meResponse is the shape returned by GET /api/me. machines is all of the user's

@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tavon-ai/proteos/controlplane/internal/auth"
-	"github.com/tavon-ai/proteos/controlplane/internal/machine"
-	"github.com/tavon-ai/proteos/controlplane/internal/session"
-	"github.com/tavon-ai/proteos/controlplane/internal/store"
+	"github.com/ipedrazas/proteos/controlplane/internal/auth"
+	"github.com/ipedrazas/proteos/controlplane/internal/machine"
+	"github.com/ipedrazas/proteos/controlplane/internal/session"
+	"github.com/ipedrazas/proteos/controlplane/internal/store"
 )
 
 // TestListSessions_RequiresAuthAndReturnsMachineContext exercises GET

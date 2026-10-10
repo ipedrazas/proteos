@@ -3,8 +3,8 @@ package dev_test
 import (
 	"testing"
 
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver"
-	"github.com/tavon-ai/proteos/nodeagent/internal/driver/conformance"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver"
+	"github.com/ipedrazas/proteos/nodeagent/internal/driver/conformance"
 )
 
 // TestConformance runs the shared driver-contract suite against the dev driver.

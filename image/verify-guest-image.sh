@@ -16,7 +16,7 @@
 #   6. /etc/proteos-release                     (provenance is stamped)
 #
 # Usage:
-#   image/verify-guest-image.sh [--image ghcr.io/tavon-ai/proteos-guest:base-dev]
+#   image/verify-guest-image.sh [--image ghcr.io/ipedrazas/proteos-guest:base-dev]
 #                               [--build] [--template base] [--keep]
 #
 # --build builds the image from image/guest.Dockerfile first (context = repo

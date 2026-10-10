@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	api "github.com/tavon-ai/proteos/nodeagent/api"
+	api "github.com/ipedrazas/proteos/nodeagent/api"
 )
 
 // TestGuestSSHForward proves the inbound-SSH path end-to-end on a real
