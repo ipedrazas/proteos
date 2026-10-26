@@ -35,7 +35,7 @@
 #     SECURITY.md for the isolation delta.
 
 ARG TEMPLATE=base
-ARG GO_IMAGE=golang:1.26
+ARG GO_IMAGE=golang:1.27
 ARG BASE_IMAGE=ubuntu:24.04
 
 # --- 1. the static guest agent ----------------------------------------------
@@ -44,7 +44,7 @@ ARG BASE_IMAGE=ubuntu:24.04
 # nothing from the other modules — Phase 3 decision #2).
 FROM ${GO_IMAGE} AS guestagent-build
 WORKDIR /src
-# GOTOOLCHAIN=auto: the golang:1.26 tag can trail guestagent/go.mod's exact
+# GOTOOLCHAIN=auto: the golang:1.27 tag can trail guestagent/go.mod's exact
 # patch requirement, and the builder has network to fetch the pinned toolchain.
 ENV CGO_ENABLED=0 GOOS=linux GOWORK=off GOTOOLCHAIN=auto
 ARG GUESTAGENT_VERSION=ga-dev
@@ -207,7 +207,7 @@ FROM platform AS lang-base
 # does NOT use a detached <tarball>.sha256 (go.dev answers that path with its
 # HTML shell and a 200).
 FROM artifacts AS go-artifact
-ARG GO_VERSION=1.26.5
+ARG GO_VERSION=1.27.3
 ARG GO_SHA256=
 RUN set -euo pipefail \
     && source /opt/proteos/lib/fetch.sh \

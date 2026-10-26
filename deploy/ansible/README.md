@@ -14,7 +14,7 @@ web) — that runs on a separate VM, see `deploy/app-stack/`.
 | ------------- | ------- |
 | `common`      | apt packages, assert `/dev/kvm`, persistent `net.ipv4.ip_forward=1`, create `/var/lib/proteos/{images,agent,volumes}` + `/srv/jailer` + `/etc/proteos` |
 | `tailscale`   | optional (off by default): add the apt repo, install `tailscale`, `tailscale up` with the supplied auth key; records the tailnet IP for the controller artifact |
-| `go`          | install pinned Go (`go.mod` needs 1.26.4) from the official tarball |
+| `go`          | install pinned Go (`go.mod` needs 1.27.3) from the official tarball |
 | `firecracker` | install pinned firecracker + jailer to `/usr/local/bin`, download the pinned CI kernel, build the ext4 rootfs with a generated SSH key |
 | `node_agent`  | sync source to `/opt/proteos/src`, build the binary, bake the guest-agent rootfs, **run the KVM acceptance gate**, render `/etc/proteos/node-agent.env`, install + enable the systemd unit, optional port firewall |
 
@@ -114,7 +114,7 @@ Run **just the Tailscale step** on an already-provisioned node with
 | `proteos_agent_token` | `CHANGE_ME` | **required** — must equal app-stack token; the play refuses the placeholder |
 | `proteos_fc_version` | `v1.16.0` | firecracker/jailer release |
 | `proteos_kernel_key` | `firecracker-ci/v1.15/x86_64/vmlinux-6.1.155` | exact pinned kernel object |
-| `proteos_go_version` | `1.26.4` | must satisfy `nodeagent/go.mod` |
+| `proteos_go_version` | `1.27.3` | must satisfy `nodeagent/go.mod` |
 | `proteos_agent_addr` | `0.0.0.0:9090` | listen address |
 | `proteos_agent_subnet` | `172.30.0.0/24` | per-host guest subnet |
 | `proteos_src_git_repo` | `""` | set to clone from git instead of rsync-ing this checkout |

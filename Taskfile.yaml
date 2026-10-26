@@ -291,7 +291,7 @@ tasks:
     desc: "Node-agent: firecracker driver unit tests in a linux container (no root/KVM; needs Docker on non-linux hosts)"
     dir: nodeagent
     cmds:
-      - docker run --rm -v {{.ROOT_DIR}}:/w -w /w/nodeagent -e GOFLAGS=-buildvcs=false -e GOTOOLCHAIN=auto golang:1.26 go test -race -tags=firecracker ./internal/driver/firecracker/
+      - docker run --rm -v {{.ROOT_DIR}}:/w -w /w/nodeagent -e GOFLAGS=-buildvcs=false -e GOTOOLCHAIN=auto golang:1.27 go test -race -tags=firecracker ./internal/driver/firecracker/
 
   na:run:
     desc: "Node-agent: run with the dev driver"
