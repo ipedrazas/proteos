@@ -11,7 +11,7 @@
 # Migrations are embedded in the binary (controlplane/internal/store + iofs), so
 # the runtime image is just the static binary — `-migrate` applies them on boot.
 
-FROM golang:1.26 AS build
+FROM golang:1.27 AS build
 WORKDIR /src
 ENV CGO_ENABLED=0 GOOS=linux GOFLAGS=-trimpath
 
