@@ -17,11 +17,11 @@
 #
 # See deploy/kubernetes/ for the manifests that run it.
 
-FROM golang:1.26 AS build
+FROM golang:1.27 AS build
 WORKDIR /src
 # GOWORK=off: the node-agent is a standalone module and imports nothing from the
 # other workspace modules, so only nodeagent/ needs to be in the context.
-# GOTOOLCHAIN=auto because the golang:1.26 tag can trail go.mod's exact patch.
+# GOTOOLCHAIN=auto because the golang:1.27 tag can trail go.mod's exact patch.
 ENV CGO_ENABLED=0 GOOS=linux GOFLAGS=-trimpath GOWORK=off GOTOOLCHAIN=auto
 
 COPY nodeagent/go.mod nodeagent/go.sum ./nodeagent/

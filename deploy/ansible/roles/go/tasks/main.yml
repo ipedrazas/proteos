@@ -1,6 +1,6 @@
 ---
 # Install a pinned Go toolchain from the official tarball. nodeagent/go.mod
-# requires go 1.26.4, newer than Ubuntu 24.04's apt `golang-go`, so we can't use
+# requires go 1.27.3, newer than Ubuntu 24.04's apt `golang-go`, so we can't use
 # the distro package. Idempotent: skip if the right version is already present.
 - name: Check installed Go version
   ansible.builtin.command: "{{ proteos_go_root }}/bin/go version"
