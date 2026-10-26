@@ -1,6 +1,6 @@
 module github.com/ipedrazas/proteos/guestagent
 
-go 1.26.9
+go 1.27.3
 
 require (
 	github.com/coder/websocket v1.8.15
@@ -24,7 +24,7 @@ require (
 	github.com/prometheus/common v0.72.0 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	golang.org/x/net v0.59.0 // indirect
+	golang.org/x/net v0.61.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	modernc.org/libc v1.79.0 // indirect
