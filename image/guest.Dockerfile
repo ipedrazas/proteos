@@ -114,6 +114,7 @@ RUN apt-get update -qq \
     && apt-get install -y --no-install-recommends \
        ca-certificates curl git vim less unzip xz-utils procps tini locales \
        openssh-client openssh-server \
+       libatomic1 \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /etc/ssh/ssh_host_*
 
@@ -138,7 +139,9 @@ RUN userdel -r ubuntu 2>/dev/null || true; \
 
 # Node + npm at /usr/local (the runtime for the npm-distributed provider CLIs).
 COPY --from=artifacts /opt/proteos/dl/node.tar.xz /tmp/node.tar.xz
-RUN tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && rm /tmp/node.tar.xz
+# Node 26+ needs libatomic1 (installed above); fail the build if node can't load.
+RUN tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && rm /tmp/node.tar.xz \
+    && node --version
 
 # code-server: the standalone release bundles its own Node and binds loopback
 # only; the guest-agent's web forward starts it lazily (Phase 8 decision #5).
