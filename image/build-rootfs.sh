@@ -1322,6 +1322,11 @@ if [[ $NEED_NODE -eq 1 || -n $NODE_VERSION ]]; then
   # Bind /dev,/proc,/sys so the chroot npm installs work; release on any exit
   # path (the EXIT trap would otherwise try to umount the busy image).
   bind_chroot
+  # Node 26+ links against libatomic.so.1, which slim bases don't ship. Without
+  # it `node` dies at load time and every npm install below fails.
+  apt_extract_install "$MNT" libatomic1
+  sudo chroot "$MNT" /usr/local/bin/node --version >/dev/null \
+    || die "node ${NODE_VERSION} is not runnable in the image (missing shared library?)"
   if [[ $GEMINI -eq 1 ]]; then
     npm_global "$MNT" "$(npm_spec @google/gemini-cli "$GEMINI_VERSION")"
     GEMINI_VERSION="$(npm_resolved "$MNT" @google/gemini-cli)"

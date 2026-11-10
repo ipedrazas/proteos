@@ -6,6 +6,12 @@ on:
     tags: ["v*.*.*"]
   pull_request:
 
+# Node for the guest image. Pinned so a new upstream LTS can't break unrelated
+# PRs (Node 26 silently needed libatomic1 and broke every PR from 2026-10-31).
+# Bump deliberately; the sha256 is still verified against nodejs.org SHASUMS256.
+env:
+  NODE_VERSION: v26.13.0
+
 # Phase 1 CI: every PR builds + tests the Go control plane (with a real Postgres
 # service container and migrations applied), checks sqlc drift, and typechecks +
 # builds the web app. CI is green from this phase on; later phases land through it.
@@ -159,6 +165,7 @@ jobs:
           build-args: |
             TEMPLATE=base
             GUESTAGENT_VERSION=ga-${{ github.sha }}
+            NODE_VERSION=${{ env.NODE_VERSION }}
           load: true
           tags: proteos-guest:base-ci
           cache-from: type=gha,scope=proteos-guest-base
@@ -513,7 +520,11 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          build-args: ${{ matrix.build-args }}
+          # NODE_VERSION only matters to the guest image (matrix entries can't
+          # read env); the other Dockerfiles ignore it.
+          build-args: |
+            ${{ matrix.build-args }}
+            NODE_VERSION=${{ env.NODE_VERSION }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

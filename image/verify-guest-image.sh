@@ -184,12 +184,17 @@ ok "terminal WebSocket upgraded and a PTY session ran a command"
 # host through the preview forwarder on 1026 using the node-agent's one-line
 # port preamble (agentapi.PreviewPreamble).
 log "checking the port-preview forward (1026 → 127.0.0.1:8080)"
-docker exec -d "$CID" /usr/local/bin/node -e \
-  "require('http').createServer((q,s)=>s.end('proteos-preview-ok')).listen(8080,'127.0.0.1')" \
+docker exec -d "$CID" sh -c \
+  "exec /usr/local/bin/node -e \"require('http').createServer((q,s)=>s.end('proteos-preview-ok')).listen(8080,'127.0.0.1')\" >/tmp/preview-backend.log 2>&1" \
   || die "could not start the in-container preview backend"
-for _ in $(seq 1 20); do
-  docker exec "$CID" sh -c 'exec 3<>/dev/tcp/127.0.0.1/8080' 2>/dev/null && break
+# bash, not sh: /dev/tcp is a bash feature and the image's /bin/sh is dash.
+for i in $(seq 1 20); do
+  docker exec "$CID" bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080' 2>/dev/null && break
   sleep 0.5
+  if [[ $i -eq 20 ]]; then
+    docker exec "$CID" cat /tmp/preview-backend.log >&2 || true
+    die "the preview backend (node) never listened on 127.0.0.1:8080, so the forward can't be tested"
+  fi
 done
 python3 - <<'PY' || die "preview forward check failed"
 import socket, sys

@@ -157,6 +157,7 @@ if [[ $BUILD -eq 1 ]]; then
   log "building $GUEST_IMAGE (this pulls Claude/Node/code-server; slow the first time)"
   docker build -q -f "$REPO_ROOT/image/guest.Dockerfile" \
     --build-arg TEMPLATE=base \
+    --build-arg "NODE_VERSION=${NODE_VERSION:-}" \
     --build-arg "GUESTAGENT_VERSION=ga-$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo nogit)" \
     -t "$GUEST_IMAGE" "$REPO_ROOT" >/dev/null || die "guest image build failed"
 fi
