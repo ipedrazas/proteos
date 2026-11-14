@@ -7,12 +7,12 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.20.1
 	github.com/ipedrazas/proteos/guestagent v0.0.0-20261026122055-313e5c341949
 	github.com/ipedrazas/proteos/nodeagent v0.0.0-20261026122055-313e5c341949
-	github.com/jackc/pgx/v5 v5.12.0
+	github.com/jackc/pgx/v5 v5.13.0
 	github.com/openbao/openbao/api/v2 v2.7.1
 	github.com/prometheus/client_golang v1.25.0
 	github.com/testcontainers/testcontainers-go v0.45.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
-	golang.org/x/crypto v0.58.0
+	golang.org/x/crypto v0.59.0
 )
 
 require (
